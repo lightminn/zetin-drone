@@ -146,15 +146,16 @@ void pid_task(void *pvParameters) {
   unsigned long nextLoopTime = micros();
   unsigned long lastTime      = micros();
 
-  inv_imu_sensor_event_t e1;
+  inv_imu_sensor_event_t e1, e2;
 
   IMU1.getDataFromRegisters(e1);
-  lpf_ax =  e1.accel[0] * ACCEL_SCALE;
-  lpf_ay = -e1.accel[1] * ACCEL_SCALE;
-  lpf_az =  e1.accel[2] * ACCEL_SCALE;
-  lpf_gx =  e1.gyro[0]  * GYRO_SCALE;
-  lpf_gy = -e1.gyro[1]  * GYRO_SCALE;
-  lpf_gz =  e1.gyro[2]  * GYRO_SCALE;
+  IMU2.getDataFromRegisters(e2);
+  lpf_ax =  ((e1.accel[0] + e2.accel[0]) * 0.5f) * ACCEL_SCALE;
+  lpf_ay = -((e1.accel[1] + e2.accel[1]) * 0.5f) * ACCEL_SCALE;
+  lpf_az =  ((e1.accel[2] + e2.accel[2]) * 0.5f) * ACCEL_SCALE;
+  lpf_gx =  ((e1.gyro[0]  + e2.gyro[0])  * 0.5f) * GYRO_SCALE;
+  lpf_gy = -((e1.gyro[1]  + e2.gyro[1])  * 0.5f) * GYRO_SCALE;
+  lpf_gz =  ((e1.gyro[2]  + e2.gyro[2])  * 0.5f) * GYRO_SCALE;
 
   while (true) {
     unsigned long now = micros();
@@ -162,12 +163,13 @@ void pid_task(void *pvParameters) {
     nextLoopTime = now + LOOP_INTERVAL;
 
     IMU1.getDataFromRegisters(e1);
-    raw_ax =  e1.accel[0] * ACCEL_SCALE;
-    raw_ay = -e1.accel[1] * ACCEL_SCALE;
-    raw_az =  e1.accel[2] * ACCEL_SCALE;
-    raw_gx =  e1.gyro[0]  * GYRO_SCALE;
-    raw_gy = -e1.gyro[1]  * GYRO_SCALE;
-    raw_gz =  e1.gyro[2]  * GYRO_SCALE;
+    IMU2.getDataFromRegisters(e2);
+    raw_ax =  ((e1.accel[0] + e2.accel[0]) * 0.5f) * ACCEL_SCALE;
+    raw_ay = -((e1.accel[1] + e2.accel[1]) * 0.5f) * ACCEL_SCALE;
+    raw_az =  ((e1.accel[2] + e2.accel[2]) * 0.5f) * ACCEL_SCALE;
+    raw_gx =  ((e1.gyro[0]  + e2.gyro[0])  * 0.5f) * GYRO_SCALE;
+    raw_gy = -((e1.gyro[1]  + e2.gyro[1])  * 0.5f) * GYRO_SCALE;
+    raw_gz =  ((e1.gyro[2]  + e2.gyro[2])  * 0.5f) * GYRO_SCALE;
 
     lpf_ax = LPF_ALPHA_ACC  * raw_ax + (1.0f - LPF_ALPHA_ACC)  * lpf_ax;
     lpf_ay = LPF_ALPHA_ACC  * raw_ay + (1.0f - LPF_ALPHA_ACC)  * lpf_ay;
@@ -351,7 +353,7 @@ void setup() {
   xTaskCreatePinnedToCore(pid_task, "PID", 4096, NULL, 1, NULL, 1);
   xTaskCreatePinnedToCore(udp_task, "UDP", 4096, NULL, 0, NULL, 0);
 
-  Serial.println("SYSTEM READY (Task 1 scaffold: dual IMU init, single IMU read)");
+  Serial.println("SYSTEM READY (Task 2: dual IMU averaged)");
 }
 
 void loop() {
