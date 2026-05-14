@@ -53,6 +53,10 @@ const uint32_t RC_TIMEOUT_MS     = 500;
 const float    IMU_FROZEN_THRESH = 0.001f;
 const uint32_t IMU_FROZEN_MS     = 200;
 
+const int      BIAS_CALIB_SAMPLES         = 2000;
+const float    BIAS_CALIB_MOVEMENT_THRESH = 1.0f;   // deg/s std-dev limit per axis
+const int      BIAS_CALIB_RETRIES         = 3;
+
 // ==========================================================
 // 3. System variables
 // ==========================================================
@@ -75,6 +79,10 @@ volatile float raw_gx = 0.0f, raw_gy = 0.0f, raw_gz = 0.0f;
 volatile float raw_ax = 0.0f, raw_ay = 0.0f, raw_az = 0.0f;
 float lpf_ax = 0.0f, lpf_ay = 0.0f, lpf_az = 0.0f;
 float lpf_gx = 0.0f, lpf_gy = 0.0f, lpf_gz = 0.0f;
+
+// Per-IMU gyro bias (deg/s), filled by calibrate_bias()
+float gyro_bias1[3] = {0.0f, 0.0f, 0.0f};
+float gyro_bias2[3] = {0.0f, 0.0f, 0.0f};
 
 volatile uint32_t lastRcTimeMs   = 0;
 volatile bool     fault_rc       = false;
@@ -143,6 +151,71 @@ bool check_attitude() {
 }
 
 // ==========================================================
+// Startup gyro bias calibration
+// ==========================================================
+// `sign` brings the IMU's gyro into the drone (IMU1) frame.
+// For IMU1 pass {+1, +1, +1}; for IMU2 pass {IMU2_SIGN_X, IMU2_SIGN_Y, IMU2_SIGN_Z}.
+static void measure_imu_bias(ICM42670 &imu, const float sign[3],
+                             float bias_out[3], float stddev_out[3]) {
+  double sum[3]    = {0.0, 0.0, 0.0};
+  double sum_sq[3] = {0.0, 0.0, 0.0};
+  inv_imu_sensor_event_t e;
+
+  for (int i = 0; i < BIAS_CALIB_SAMPLES; i++) {
+    imu.getDataFromRegisters(e);
+    float g[3] = {
+      sign[0] * e.gyro[0] * GYRO_SCALE,
+      sign[1] * e.gyro[1] * GYRO_SCALE,
+      sign[2] * e.gyro[2] * GYRO_SCALE
+    };
+    for (int k = 0; k < 3; k++) {
+      sum[k]    += g[k];
+      sum_sq[k] += (double)g[k] * g[k];
+    }
+    delayMicroseconds(1000);  // ~1 kHz sampling
+  }
+
+  for (int k = 0; k < 3; k++) {
+    double mean = sum[k] / BIAS_CALIB_SAMPLES;
+    double var  = (sum_sq[k] / BIAS_CALIB_SAMPLES) - (mean * mean);
+    if (var < 0) var = 0;
+    bias_out[k]   = (float)mean;
+    stddev_out[k] = (float)sqrt(var);
+  }
+}
+
+static const float IMU1_SIGN[3] = { 1.0f, 1.0f, 1.0f };
+static const float IMU2_SIGN[3] = { IMU2_SIGN_X, IMU2_SIGN_Y, IMU2_SIGN_Z };
+
+static void calibrate_bias() {
+  float sd1[3], sd2[3];
+
+  for (int attempt = 1; attempt <= BIAS_CALIB_RETRIES; attempt++) {
+    Serial.printf("[CALIB] attempt %d/%d (hold still)...\n", attempt, BIAS_CALIB_RETRIES);
+
+    measure_imu_bias(IMU1, IMU1_SIGN, gyro_bias1, sd1);
+    measure_imu_bias(IMU2, IMU2_SIGN, gyro_bias2, sd2);
+
+    float max_sd = max(max(max(sd1[0], sd1[1]), sd1[2]),
+                       max(max(sd2[0], sd2[1]), sd2[2]));
+
+    Serial.printf("[CALIB] IMU1 bias x=%.3f y=%.3f z=%.3f (sd %.3f %.3f %.3f)\n",
+                  gyro_bias1[0], gyro_bias1[1], gyro_bias1[2], sd1[0], sd1[1], sd1[2]);
+    Serial.printf("[CALIB] IMU2 bias x=%.3f y=%.3f z=%.3f (sd %.3f %.3f %.3f) [drone frame]\n",
+                  gyro_bias2[0], gyro_bias2[1], gyro_bias2[2], sd2[0], sd2[1], sd2[2]);
+
+    if (max_sd <= BIAS_CALIB_MOVEMENT_THRESH) {
+      Serial.println("[CALIB] OK");
+      return;
+    }
+    Serial.printf("[CALIB] movement detected (sd %.3f > %.3f), retrying\n",
+                  max_sd, BIAS_CALIB_MOVEMENT_THRESH);
+  }
+
+  Serial.println("[CALIB] WARN: all retries failed, using last measurement");
+}
+
+// ==========================================================
 // 6. PID task (Core 1, 1kHz) — single IMU read for now
 // ==========================================================
 const float ALPHA_COMP = 0.995f;  // temporary; replaced in Task 5
@@ -156,12 +229,20 @@ void pid_task(void *pvParameters) {
 
   IMU1.getDataFromRegisters(e1);
   IMU2.getDataFromRegisters(e2);
+
+  float gx1 =                  e1.gyro[0]  * GYRO_SCALE - gyro_bias1[0];
+  float gy1 =                  e1.gyro[1]  * GYRO_SCALE - gyro_bias1[1];
+  float gz1 =                  e1.gyro[2]  * GYRO_SCALE - gyro_bias1[2];
+  float gx2 = IMU2_SIGN_X    * e2.gyro[0]  * GYRO_SCALE - gyro_bias2[0];
+  float gy2 = IMU2_SIGN_Y    * e2.gyro[1]  * GYRO_SCALE - gyro_bias2[1];
+  float gz2 = IMU2_SIGN_Z    * e2.gyro[2]  * GYRO_SCALE - gyro_bias2[2];
+
   lpf_ax =  ((e1.accel[0] + IMU2_SIGN_X * e2.accel[0]) * 0.5f) * ACCEL_SCALE;
   lpf_ay = -((e1.accel[1] + IMU2_SIGN_Y * e2.accel[1]) * 0.5f) * ACCEL_SCALE;
   lpf_az =  ((e1.accel[2] + IMU2_SIGN_Z * e2.accel[2]) * 0.5f) * ACCEL_SCALE;
-  lpf_gx =  ((e1.gyro[0]  + IMU2_SIGN_X * e2.gyro[0])  * 0.5f) * GYRO_SCALE;
-  lpf_gy = -((e1.gyro[1]  + IMU2_SIGN_Y * e2.gyro[1])  * 0.5f) * GYRO_SCALE;
-  lpf_gz =  ((e1.gyro[2]  + IMU2_SIGN_Z * e2.gyro[2])  * 0.5f) * GYRO_SCALE;
+  lpf_gx =  (gx1 + gx2) * 0.5f;
+  lpf_gy = -(gy1 + gy2) * 0.5f;
+  lpf_gz =  (gz1 + gz2) * 0.5f;
 
   while (true) {
     unsigned long now = micros();
@@ -170,12 +251,23 @@ void pid_task(void *pvParameters) {
 
     IMU1.getDataFromRegisters(e1);
     IMU2.getDataFromRegisters(e2);
+
+    // Sign-corrected (drone-frame) gyro reads, then subtract bias
+    float gx1 =                  e1.gyro[0]  * GYRO_SCALE - gyro_bias1[0];
+    float gy1 =                  e1.gyro[1]  * GYRO_SCALE - gyro_bias1[1];
+    float gz1 =                  e1.gyro[2]  * GYRO_SCALE - gyro_bias1[2];
+    float gx2 = IMU2_SIGN_X    * e2.gyro[0]  * GYRO_SCALE - gyro_bias2[0];
+    float gy2 = IMU2_SIGN_Y    * e2.gyro[1]  * GYRO_SCALE - gyro_bias2[1];
+    float gz2 = IMU2_SIGN_Z    * e2.gyro[2]  * GYRO_SCALE - gyro_bias2[2];
+
+    // Accel: average sign-corrected reads, then apply drone Y flip at the end
     raw_ax =  ((e1.accel[0] + IMU2_SIGN_X * e2.accel[0]) * 0.5f) * ACCEL_SCALE;
     raw_ay = -((e1.accel[1] + IMU2_SIGN_Y * e2.accel[1]) * 0.5f) * ACCEL_SCALE;
     raw_az =  ((e1.accel[2] + IMU2_SIGN_Z * e2.accel[2]) * 0.5f) * ACCEL_SCALE;
-    raw_gx =  ((e1.gyro[0]  + IMU2_SIGN_X * e2.gyro[0])  * 0.5f) * GYRO_SCALE;
-    raw_gy = -((e1.gyro[1]  + IMU2_SIGN_Y * e2.gyro[1])  * 0.5f) * GYRO_SCALE;
-    raw_gz =  ((e1.gyro[2]  + IMU2_SIGN_Z * e2.gyro[2])  * 0.5f) * GYRO_SCALE;
+    // Gyro: average bias-corrected per-IMU values, then apply drone Y flip
+    raw_gx =  (gx1 + gx2) * 0.5f;
+    raw_gy = -(gy1 + gy2) * 0.5f;
+    raw_gz =  (gz1 + gz2) * 0.5f;
 
     lpf_ax = LPF_ALPHA_ACC  * raw_ax + (1.0f - LPF_ALPHA_ACC)  * lpf_ax;
     lpf_ay = LPF_ALPHA_ACC  * raw_ay + (1.0f - LPF_ALPHA_ACC)  * lpf_ay;
@@ -356,10 +448,12 @@ void setup() {
   IMU2.startGyro(1600, 2000);
   delay(500);
 
+  calibrate_bias();
+
   xTaskCreatePinnedToCore(pid_task, "PID", 4096, NULL, 1, NULL, 1);
   xTaskCreatePinnedToCore(udp_task, "UDP", 4096, NULL, 0, NULL, 0);
 
-  Serial.println("SYSTEM READY (Task 2: dual IMU averaged)");
+  Serial.println("SYSTEM READY (Task 3: bias calibration)");
 }
 
 void loop() {
