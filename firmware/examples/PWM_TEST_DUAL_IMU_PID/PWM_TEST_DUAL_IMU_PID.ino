@@ -466,7 +466,7 @@ void setup() {
   xTaskCreatePinnedToCore(pid_task, "PID", 4096, NULL, 1, NULL, 1);
   xTaskCreatePinnedToCore(udp_task, "UDP", 4096, NULL, 0, NULL, 0);
 
-  Serial.println("SYSTEM READY (Task 5: adaptive complementary filter)");
+  Serial.println("PWM_TEST_DUAL_IMU_PID READY");
 }
 
 void loop() {
