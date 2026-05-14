@@ -43,6 +43,12 @@ const float ACCEL_SCALE  = 1.0f / 2048.0f;
 const float SAFETY_ANGLE = 45.0f;
 const float YAW_DEADZONE = 0.3f;
 
+// IMU2 is mounted with x and z axes inverted vs IMU1 (y matches).
+// Apply these signs to every IMU2 axis read before averaging or bias use.
+const float IMU2_SIGN_X = -1.0f;
+const float IMU2_SIGN_Y =  1.0f;
+const float IMU2_SIGN_Z = -1.0f;
+
 const uint32_t RC_TIMEOUT_MS     = 500;
 const float    IMU_FROZEN_THRESH = 0.001f;
 const uint32_t IMU_FROZEN_MS     = 200;
@@ -150,12 +156,12 @@ void pid_task(void *pvParameters) {
 
   IMU1.getDataFromRegisters(e1);
   IMU2.getDataFromRegisters(e2);
-  lpf_ax =  ((e1.accel[0] + e2.accel[0]) * 0.5f) * ACCEL_SCALE;
-  lpf_ay = -((e1.accel[1] + e2.accel[1]) * 0.5f) * ACCEL_SCALE;
-  lpf_az =  ((e1.accel[2] + e2.accel[2]) * 0.5f) * ACCEL_SCALE;
-  lpf_gx =  ((e1.gyro[0]  + e2.gyro[0])  * 0.5f) * GYRO_SCALE;
-  lpf_gy = -((e1.gyro[1]  + e2.gyro[1])  * 0.5f) * GYRO_SCALE;
-  lpf_gz =  ((e1.gyro[2]  + e2.gyro[2])  * 0.5f) * GYRO_SCALE;
+  lpf_ax =  ((e1.accel[0] + IMU2_SIGN_X * e2.accel[0]) * 0.5f) * ACCEL_SCALE;
+  lpf_ay = -((e1.accel[1] + IMU2_SIGN_Y * e2.accel[1]) * 0.5f) * ACCEL_SCALE;
+  lpf_az =  ((e1.accel[2] + IMU2_SIGN_Z * e2.accel[2]) * 0.5f) * ACCEL_SCALE;
+  lpf_gx =  ((e1.gyro[0]  + IMU2_SIGN_X * e2.gyro[0])  * 0.5f) * GYRO_SCALE;
+  lpf_gy = -((e1.gyro[1]  + IMU2_SIGN_Y * e2.gyro[1])  * 0.5f) * GYRO_SCALE;
+  lpf_gz =  ((e1.gyro[2]  + IMU2_SIGN_Z * e2.gyro[2])  * 0.5f) * GYRO_SCALE;
 
   while (true) {
     unsigned long now = micros();
@@ -164,12 +170,12 @@ void pid_task(void *pvParameters) {
 
     IMU1.getDataFromRegisters(e1);
     IMU2.getDataFromRegisters(e2);
-    raw_ax =  ((e1.accel[0] + e2.accel[0]) * 0.5f) * ACCEL_SCALE;
-    raw_ay = -((e1.accel[1] + e2.accel[1]) * 0.5f) * ACCEL_SCALE;
-    raw_az =  ((e1.accel[2] + e2.accel[2]) * 0.5f) * ACCEL_SCALE;
-    raw_gx =  ((e1.gyro[0]  + e2.gyro[0])  * 0.5f) * GYRO_SCALE;
-    raw_gy = -((e1.gyro[1]  + e2.gyro[1])  * 0.5f) * GYRO_SCALE;
-    raw_gz =  ((e1.gyro[2]  + e2.gyro[2])  * 0.5f) * GYRO_SCALE;
+    raw_ax =  ((e1.accel[0] + IMU2_SIGN_X * e2.accel[0]) * 0.5f) * ACCEL_SCALE;
+    raw_ay = -((e1.accel[1] + IMU2_SIGN_Y * e2.accel[1]) * 0.5f) * ACCEL_SCALE;
+    raw_az =  ((e1.accel[2] + IMU2_SIGN_Z * e2.accel[2]) * 0.5f) * ACCEL_SCALE;
+    raw_gx =  ((e1.gyro[0]  + IMU2_SIGN_X * e2.gyro[0])  * 0.5f) * GYRO_SCALE;
+    raw_gy = -((e1.gyro[1]  + IMU2_SIGN_Y * e2.gyro[1])  * 0.5f) * GYRO_SCALE;
+    raw_gz =  ((e1.gyro[2]  + IMU2_SIGN_Z * e2.gyro[2])  * 0.5f) * GYRO_SCALE;
 
     lpf_ax = LPF_ALPHA_ACC  * raw_ax + (1.0f - LPF_ALPHA_ACC)  * lpf_ax;
     lpf_ay = LPF_ALPHA_ACC  * raw_ay + (1.0f - LPF_ALPHA_ACC)  * lpf_ay;
