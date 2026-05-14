@@ -518,7 +518,9 @@ git commit -m "feat: read both IMUs and average raw values"
 
 ## Task 3: Startup gyro bias calibration
 
-**Goal:** Add `calibrate_bias()` that runs in `setup()` after IMU init. Measures 2000 samples per IMU, checks for movement, stores per-IMU bias arrays, retries up to 3 times.
+**Goal:** Add `calibrate_bias()` that runs in `setup()` after IMU init. Measures 2000 samples per IMU, checks for movement, stores per-IMU bias arrays (in **drone frame**, with IMU2 sign correction applied), retries up to 3 times.
+
+> **Note (Task 2 fix):** IMU2 is mounted with x and z axes inverted vs IMU1; `IMU2_SIGN_X/Y/Z` constants were added in section 2 in the Task 2 fix. Task 3 must apply these signs at bias measurement so `gyro_bias2` is in the same (IMU1/drone) frame as `gyro_bias1`. Otherwise the bias subtraction during averaging would be in the wrong frame.
 
 **Files:**
 - Modify: `firmware/examples/PWM_TEST_DUAL_IMU_PID/PWM_TEST_DUAL_IMU_PID.ino`
@@ -547,7 +549,10 @@ Insert before the `// 6. PID task` comment:
 // ==========================================================
 // Startup gyro bias calibration
 // ==========================================================
-static void measure_imu_bias(ICM42670 &imu, float bias_out[3], float stddev_out[3]) {
+// `sign` brings the IMU's gyro into the drone (IMU1) frame.
+// For IMU1 pass {+1, +1, +1}; for IMU2 pass {IMU2_SIGN_X, IMU2_SIGN_Y, IMU2_SIGN_Z}.
+static void measure_imu_bias(ICM42670 &imu, const float sign[3],
+                             float bias_out[3], float stddev_out[3]) {
   double sum[3]    = {0.0, 0.0, 0.0};
   double sum_sq[3] = {0.0, 0.0, 0.0};
   inv_imu_sensor_event_t e;
@@ -555,9 +560,9 @@ static void measure_imu_bias(ICM42670 &imu, float bias_out[3], float stddev_out[
   for (int i = 0; i < BIAS_CALIB_SAMPLES; i++) {
     imu.getDataFromRegisters(e);
     float g[3] = {
-      e.gyro[0] * GYRO_SCALE,
-      e.gyro[1] * GYRO_SCALE,
-      e.gyro[2] * GYRO_SCALE
+      sign[0] * e.gyro[0] * GYRO_SCALE,
+      sign[1] * e.gyro[1] * GYRO_SCALE,
+      sign[2] * e.gyro[2] * GYRO_SCALE
     };
     for (int k = 0; k < 3; k++) {
       sum[k]    += g[k];
@@ -575,21 +580,24 @@ static void measure_imu_bias(ICM42670 &imu, float bias_out[3], float stddev_out[
   }
 }
 
+static const float IMU1_SIGN[3] = { 1.0f, 1.0f, 1.0f };
+static const float IMU2_SIGN[3] = { IMU2_SIGN_X, IMU2_SIGN_Y, IMU2_SIGN_Z };
+
 static void calibrate_bias() {
   float sd1[3], sd2[3];
 
   for (int attempt = 1; attempt <= BIAS_CALIB_RETRIES; attempt++) {
     Serial.printf("[CALIB] attempt %d/%d (hold still)...\n", attempt, BIAS_CALIB_RETRIES);
 
-    measure_imu_bias(IMU1, gyro_bias1, sd1);
-    measure_imu_bias(IMU2, gyro_bias2, sd2);
+    measure_imu_bias(IMU1, IMU1_SIGN, gyro_bias1, sd1);
+    measure_imu_bias(IMU2, IMU2_SIGN, gyro_bias2, sd2);
 
     float max_sd = max(max(max(sd1[0], sd1[1]), sd1[2]),
                        max(max(sd2[0], sd2[1]), sd2[2]));
 
     Serial.printf("[CALIB] IMU1 bias x=%.3f y=%.3f z=%.3f (sd %.3f %.3f %.3f)\n",
                   gyro_bias1[0], gyro_bias1[1], gyro_bias1[2], sd1[0], sd1[1], sd1[2]);
-    Serial.printf("[CALIB] IMU2 bias x=%.3f y=%.3f z=%.3f (sd %.3f %.3f %.3f)\n",
+    Serial.printf("[CALIB] IMU2 bias x=%.3f y=%.3f z=%.3f (sd %.3f %.3f %.3f) [drone frame]\n",
                   gyro_bias2[0], gyro_bias2[1], gyro_bias2[2], sd2[0], sd2[1], sd2[2]);
 
     if (max_sd <= BIAS_CALIB_MOVEMENT_THRESH) {
@@ -603,6 +611,8 @@ static void calibrate_bias() {
   Serial.println("[CALIB] WARN: all retries failed, using last measurement");
 }
 ```
+
+After this step, `gyro_bias1` and `gyro_bias2` are both stored in **IMU1/drone frame** (with IMU2's axis sign correction applied during accumulation). Downstream code subtracts bias from sign-corrected gyro values — see Step 5.
 
 - [ ] **Step 4: Call `calibrate_bias()` in setup() after IMU startAccel/startGyro and before xTaskCreatePinnedToCore**
 
@@ -630,49 +640,54 @@ Change to:
 
 - [ ] **Step 5: Apply bias correction in `pid_task` reads**
 
-In `pid_task`, change the in-loop dual read block (gyro lines only — accel does not get bias correction) to:
+In `pid_task`, change the in-loop dual read block to apply IMU2 sign correction and subtract per-IMU bias (bias is already in drone frame from Step 3). Replace the entire in-loop read block (the one from Task 2 that uses `IMU2_SIGN_X * e2.gyro[0]` etc) with:
 
 ```cpp
     IMU1.getDataFromRegisters(e1);
     IMU2.getDataFromRegisters(e2);
 
-    float gx1 =  e1.gyro[0] * GYRO_SCALE - gyro_bias1[0];
-    float gy1 = -e1.gyro[1] * GYRO_SCALE + gyro_bias1[1];  // sign-flipped axis: bias must match
-    float gz1 =  e1.gyro[2] * GYRO_SCALE - gyro_bias1[2];
-    float gx2 =  e2.gyro[0] * GYRO_SCALE - gyro_bias2[0];
-    float gy2 = -e2.gyro[1] * GYRO_SCALE + gyro_bias2[1];
-    float gz2 =  e2.gyro[2] * GYRO_SCALE - gyro_bias2[2];
+    // Sign-corrected (drone-frame) gyro reads, then subtract bias
+    float gx1 =                  e1.gyro[0]  * GYRO_SCALE - gyro_bias1[0];
+    float gy1 =                  e1.gyro[1]  * GYRO_SCALE - gyro_bias1[1];
+    float gz1 =                  e1.gyro[2]  * GYRO_SCALE - gyro_bias1[2];
+    float gx2 = IMU2_SIGN_X    * e2.gyro[0]  * GYRO_SCALE - gyro_bias2[0];
+    float gy2 = IMU2_SIGN_Y    * e2.gyro[1]  * GYRO_SCALE - gyro_bias2[1];
+    float gz2 = IMU2_SIGN_Z    * e2.gyro[2]  * GYRO_SCALE - gyro_bias2[2];
 
-    raw_ax =  ((e1.accel[0] + e2.accel[0]) * 0.5f) * ACCEL_SCALE;
-    raw_ay = -((e1.accel[1] + e2.accel[1]) * 0.5f) * ACCEL_SCALE;
-    raw_az =  ((e1.accel[2] + e2.accel[2]) * 0.5f) * ACCEL_SCALE;
+    // Accel: average sign-corrected reads, then apply drone Y flip at the end
+    raw_ax =  ((e1.accel[0] + IMU2_SIGN_X * e2.accel[0]) * 0.5f) * ACCEL_SCALE;
+    raw_ay = -((e1.accel[1] + IMU2_SIGN_Y * e2.accel[1]) * 0.5f) * ACCEL_SCALE;
+    raw_az =  ((e1.accel[2] + IMU2_SIGN_Z * e2.accel[2]) * 0.5f) * ACCEL_SCALE;
+    // Gyro: average bias-corrected per-IMU values, then apply drone Y flip
     raw_gx =  (gx1 + gx2) * 0.5f;
-    raw_gy =  (gy1 + gy2) * 0.5f;
+    raw_gy = -(gy1 + gy2) * 0.5f;
     raw_gz =  (gz1 + gz2) * 0.5f;
 ```
 
-Note: `bias` is measured on raw GYRO_SCALE-applied values WITHOUT sign flip. Y axis is sign-flipped on use: `raw_gy = -(raw + scale) + bias`. Since `gyro_bias[1]` was measured from `e.gyro[1] * GYRO_SCALE` (no flip), and we apply on the flipped value, the sign of the bias on Y must flip too: subtraction becomes addition. The lines above already encode that.
+Reasoning: `gx1/gy1/gz1` and `gx2/gy2/gz2` are per-IMU gyro readings in each IMU's own frame after bias subtraction (bias was measured pre-Y-flip in Step 3). The outer Y negation on `raw_gy` brings the result to the drone's Y axis convention, matching the original sign behavior used by `atan2f` and PID.
 
-Also update the pre-loop init similarly:
+Also replace the pre-loop init similarly:
 
 ```cpp
   IMU1.getDataFromRegisters(e1);
   IMU2.getDataFromRegisters(e2);
 
-  float gx1 =  e1.gyro[0] * GYRO_SCALE - gyro_bias1[0];
-  float gy1 = -e1.gyro[1] * GYRO_SCALE + gyro_bias1[1];
-  float gz1 =  e1.gyro[2] * GYRO_SCALE - gyro_bias1[2];
-  float gx2 =  e2.gyro[0] * GYRO_SCALE - gyro_bias2[0];
-  float gy2 = -e2.gyro[1] * GYRO_SCALE + gyro_bias2[1];
-  float gz2 =  e2.gyro[2] * GYRO_SCALE - gyro_bias2[2];
+  float gx1 =                  e1.gyro[0]  * GYRO_SCALE - gyro_bias1[0];
+  float gy1 =                  e1.gyro[1]  * GYRO_SCALE - gyro_bias1[1];
+  float gz1 =                  e1.gyro[2]  * GYRO_SCALE - gyro_bias1[2];
+  float gx2 = IMU2_SIGN_X    * e2.gyro[0]  * GYRO_SCALE - gyro_bias2[0];
+  float gy2 = IMU2_SIGN_Y    * e2.gyro[1]  * GYRO_SCALE - gyro_bias2[1];
+  float gz2 = IMU2_SIGN_Z    * e2.gyro[2]  * GYRO_SCALE - gyro_bias2[2];
 
-  lpf_ax =  ((e1.accel[0] + e2.accel[0]) * 0.5f) * ACCEL_SCALE;
-  lpf_ay = -((e1.accel[1] + e2.accel[1]) * 0.5f) * ACCEL_SCALE;
-  lpf_az =  ((e1.accel[2] + e2.accel[2]) * 0.5f) * ACCEL_SCALE;
+  lpf_ax =  ((e1.accel[0] + IMU2_SIGN_X * e2.accel[0]) * 0.5f) * ACCEL_SCALE;
+  lpf_ay = -((e1.accel[1] + IMU2_SIGN_Y * e2.accel[1]) * 0.5f) * ACCEL_SCALE;
+  lpf_az =  ((e1.accel[2] + IMU2_SIGN_Z * e2.accel[2]) * 0.5f) * ACCEL_SCALE;
   lpf_gx =  (gx1 + gx2) * 0.5f;
-  lpf_gy =  (gy1 + gy2) * 0.5f;
+  lpf_gy = -(gy1 + gy2) * 0.5f;
   lpf_gz =  (gz1 + gz2) * 0.5f;
 ```
+
+Important sign note: bias for IMU1 (`gyro_bias1`) was measured on raw `e1.gyro[k] * GYRO_SCALE` (no Y flip). Same for IMU2 — but with sign correction applied during accumulation. So in pid_task we subtract bias from the same sign-corrected, pre-Y-flip values. The drone-frame Y flip is applied once at the very end to `raw_gy` and `lpf_gy`.
 
 - [ ] **Step 6: Update ready message**
 
@@ -816,25 +831,29 @@ static bool check_imu_disagree() {
 
 - [ ] **Step 4: Restructure the in-loop read in `pid_task` to populate per-IMU corrected values and fuse with fallback**
 
+The corrected values `gx1_c..az2_c` are stored in **drone frame** (sign-corrected for IMU2, Y already flipped). The fusion averages them and writes directly to `raw_*`.
+
 Replace the in-loop dual read block from Task 3 with:
 
 ```cpp
     IMU1.getDataFromRegisters(e1);
     IMU2.getDataFromRegisters(e2);
 
-    gx1_c =  e1.gyro[0]  * GYRO_SCALE - gyro_bias1[0];
-    gy1_c = -e1.gyro[1]  * GYRO_SCALE + gyro_bias1[1];
-    gz1_c =  e1.gyro[2]  * GYRO_SCALE - gyro_bias1[2];
-    gx2_c =  e2.gyro[0]  * GYRO_SCALE - gyro_bias2[0];
-    gy2_c = -e2.gyro[1]  * GYRO_SCALE + gyro_bias2[1];
-    gz2_c =  e2.gyro[2]  * GYRO_SCALE - gyro_bias2[2];
+    // Per-IMU gyro in drone frame (sign-corrected, Y-flipped, bias-subtracted)
+    gx1_c =  (              e1.gyro[0] * GYRO_SCALE - gyro_bias1[0]);
+    gy1_c = -(              e1.gyro[1] * GYRO_SCALE - gyro_bias1[1]);
+    gz1_c =  (              e1.gyro[2] * GYRO_SCALE - gyro_bias1[2]);
+    gx2_c =  (IMU2_SIGN_X * e2.gyro[0] * GYRO_SCALE - gyro_bias2[0]);
+    gy2_c = -(IMU2_SIGN_Y * e2.gyro[1] * GYRO_SCALE - gyro_bias2[1]);
+    gz2_c =  (IMU2_SIGN_Z * e2.gyro[2] * GYRO_SCALE - gyro_bias2[2]);
 
-    ax1_c =  e1.accel[0] * ACCEL_SCALE;
-    ay1_c = -e1.accel[1] * ACCEL_SCALE;
-    az1_c =  e1.accel[2] * ACCEL_SCALE;
-    ax2_c =  e2.accel[0] * ACCEL_SCALE;
-    ay2_c = -e2.accel[1] * ACCEL_SCALE;
-    az2_c =  e2.accel[2] * ACCEL_SCALE;
+    // Per-IMU accel in drone frame (sign-corrected, Y-flipped)
+    ax1_c =  (              e1.accel[0]) * ACCEL_SCALE;
+    ay1_c = -(              e1.accel[1]) * ACCEL_SCALE;
+    az1_c =  (              e1.accel[2]) * ACCEL_SCALE;
+    ax2_c =  (IMU2_SIGN_X * e2.accel[0]) * ACCEL_SCALE;
+    ay2_c = -(IMU2_SIGN_Y * e2.accel[1]) * ACCEL_SCALE;
+    az2_c =  (IMU2_SIGN_Z * e2.accel[2]) * ACCEL_SCALE;
 
     // Fuse: average if both healthy, else use the healthy one
     if (fault_imu1 && !fault_imu2) {
@@ -861,18 +880,18 @@ Replace the pre-loop init from Task 3 with:
   IMU1.getDataFromRegisters(e1);
   IMU2.getDataFromRegisters(e2);
 
-  gx1_c =  e1.gyro[0]  * GYRO_SCALE - gyro_bias1[0];
-  gy1_c = -e1.gyro[1]  * GYRO_SCALE + gyro_bias1[1];
-  gz1_c =  e1.gyro[2]  * GYRO_SCALE - gyro_bias1[2];
-  gx2_c =  e2.gyro[0]  * GYRO_SCALE - gyro_bias2[0];
-  gy2_c = -e2.gyro[1]  * GYRO_SCALE + gyro_bias2[1];
-  gz2_c =  e2.gyro[2]  * GYRO_SCALE - gyro_bias2[2];
-  ax1_c =  e1.accel[0] * ACCEL_SCALE;
-  ay1_c = -e1.accel[1] * ACCEL_SCALE;
-  az1_c =  e1.accel[2] * ACCEL_SCALE;
-  ax2_c =  e2.accel[0] * ACCEL_SCALE;
-  ay2_c = -e2.accel[1] * ACCEL_SCALE;
-  az2_c =  e2.accel[2] * ACCEL_SCALE;
+  gx1_c =  (              e1.gyro[0] * GYRO_SCALE - gyro_bias1[0]);
+  gy1_c = -(              e1.gyro[1] * GYRO_SCALE - gyro_bias1[1]);
+  gz1_c =  (              e1.gyro[2] * GYRO_SCALE - gyro_bias1[2]);
+  gx2_c =  (IMU2_SIGN_X * e2.gyro[0] * GYRO_SCALE - gyro_bias2[0]);
+  gy2_c = -(IMU2_SIGN_Y * e2.gyro[1] * GYRO_SCALE - gyro_bias2[1]);
+  gz2_c =  (IMU2_SIGN_Z * e2.gyro[2] * GYRO_SCALE - gyro_bias2[2]);
+  ax1_c =  (              e1.accel[0]) * ACCEL_SCALE;
+  ay1_c = -(              e1.accel[1]) * ACCEL_SCALE;
+  az1_c =  (              e1.accel[2]) * ACCEL_SCALE;
+  ax2_c =  (IMU2_SIGN_X * e2.accel[0]) * ACCEL_SCALE;
+  ay2_c = -(IMU2_SIGN_Y * e2.accel[1]) * ACCEL_SCALE;
+  az2_c =  (IMU2_SIGN_Z * e2.accel[2]) * ACCEL_SCALE;
 
   lpf_ax = (ax1_c + ax2_c) * 0.5f;
   lpf_ay = (ay1_c + ay2_c) * 0.5f;
@@ -1040,16 +1059,17 @@ const float RUNTIME_BIAS_GYRO_LIMIT = 2.0f;   // deg/s
 Add inside `pid_task`, after the local declarations and before the pre-loop initial read:
 
 ```cpp
-  auto maybe_update_bias = [&](float raw_e_gyro_x, float raw_e_gyro_y, float raw_e_gyro_z,
+  auto maybe_update_bias = [&](float sgx, float sgy, float sgz,
                                float (&bias)[3]) {
-    // Operate on raw scaled gyro (no sign flip), to match how bias was measured in setup.
+    // sgx/sgy/sgz are sign-corrected pre-Y-flip gyro (drone frame except Y flip),
+    // matching how bias was measured in setup. Bias is stored in the same frame.
     if (base_throttle >= 1100) return;
-    if (fabsf(raw_e_gyro_x - bias[0]) > RUNTIME_BIAS_GYRO_LIMIT) return;
-    if (fabsf(raw_e_gyro_y - bias[1]) > RUNTIME_BIAS_GYRO_LIMIT) return;
-    if (fabsf(raw_e_gyro_z - bias[2]) > RUNTIME_BIAS_GYRO_LIMIT) return;
-    bias[0] = bias[0] * (1.0f - RUNTIME_BIAS_ALPHA) + raw_e_gyro_x * RUNTIME_BIAS_ALPHA;
-    bias[1] = bias[1] * (1.0f - RUNTIME_BIAS_ALPHA) + raw_e_gyro_y * RUNTIME_BIAS_ALPHA;
-    bias[2] = bias[2] * (1.0f - RUNTIME_BIAS_ALPHA) + raw_e_gyro_z * RUNTIME_BIAS_ALPHA;
+    if (fabsf(sgx - bias[0]) > RUNTIME_BIAS_GYRO_LIMIT) return;
+    if (fabsf(sgy - bias[1]) > RUNTIME_BIAS_GYRO_LIMIT) return;
+    if (fabsf(sgz - bias[2]) > RUNTIME_BIAS_GYRO_LIMIT) return;
+    bias[0] = bias[0] * (1.0f - RUNTIME_BIAS_ALPHA) + sgx * RUNTIME_BIAS_ALPHA;
+    bias[1] = bias[1] * (1.0f - RUNTIME_BIAS_ALPHA) + sgy * RUNTIME_BIAS_ALPHA;
+    bias[2] = bias[2] * (1.0f - RUNTIME_BIAS_ALPHA) + sgz * RUNTIME_BIAS_ALPHA;
   };
 ```
 
@@ -1062,16 +1082,16 @@ In `pid_task`, immediately after the in-loop reads:
     IMU2.getDataFromRegisters(e2);
 ```
 
-Add right below:
+Add right below (apply IMU2 sign correction so the values match how bias was measured):
 
 ```cpp
-    maybe_update_bias(e1.gyro[0] * GYRO_SCALE,
-                      e1.gyro[1] * GYRO_SCALE,
-                      e1.gyro[2] * GYRO_SCALE,
-                      gyro_bias1);
-    maybe_update_bias(e2.gyro[0] * GYRO_SCALE,
-                      e2.gyro[1] * GYRO_SCALE,
-                      e2.gyro[2] * GYRO_SCALE,
+    maybe_update_bias(              e1.gyro[0] * GYRO_SCALE,
+                                    e1.gyro[1] * GYRO_SCALE,
+                                    e1.gyro[2] * GYRO_SCALE,
+                                    gyro_bias1);
+    maybe_update_bias(IMU2_SIGN_X * e2.gyro[0] * GYRO_SCALE,
+                      IMU2_SIGN_Y * e2.gyro[1] * GYRO_SCALE,
+                      IMU2_SIGN_Z * e2.gyro[2] * GYRO_SCALE,
                       gyro_bias2);
 ```
 

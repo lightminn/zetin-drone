@@ -32,6 +32,14 @@ WiFi/UDP 프로토콜과 텔레메트리 14필드 형식은 100% 호환 → `Dro
 - 모터 PWM: M1=4(FL/CW), M2=5(RR/CW), M3=6(FR/CCW), M4=7(RL/CCW)
 - 기존 `LDO_PIN=9`는 **삭제** (IMU2 CS와 충돌). IMU2 라이브러리가 CS 자동 제어.
 
+### IMU 축 정렬
+하드웨어 측정 결과: IMU2는 IMU1 대비 **X축 부호 반전, Y축 동일, Z축 부호 반전**.
+- `IMU2_SIGN_X = -1.0f`
+- `IMU2_SIGN_Y = +1.0f`
+- `IMU2_SIGN_Z = -1.0f`
+
+이 부호는 IMU2 raw 값 읽은 직후 곱해 IMU1/drone frame으로 변환. 이후 bias 측정, fusion, 적응 필터 등 모든 downstream 로직은 정렬된 값으로 동작.
+
 ## 4. Gyro Bias Calibration (드리프트 해결 핵심)
 
 ### 4.1 Startup Calibration
@@ -174,5 +182,5 @@ loop() (Core 1): 50ms 텔레메트리, 기존 14필드 형식
 ## 11. Open Questions / Risks
 
 - **SPI 두 번 읽기 시 1kHz 유지 가능한지**: 단일 IMU 시점에 충분히 마진이 있었음. 두 번 읽어도 SPI ≥ 8MHz면 < 200µs 예상. 1kHz 루프 (1000µs) 안에 여유 있을 것. 실측으로 확인 필요.
-- **두 IMU 부착 방향**: 둘 다 같은 방향으로 PCB에 부착되어 있다고 가정. 만약 반대 방향이면 IMU2 부호 반전 필요 → 캘리브레이션 단계에서 둘의 가속도 z축이 같은 부호인지 자동 검증 가능 (선택사항).
+- **두 IMU 부착 방향**: **하드웨어 측정 결과**, IMU2는 IMU1 대비 X축과 Z축이 부호 반전, Y축은 동일. `IMU2_SIGN_X = -1, IMU2_SIGN_Y = +1, IMU2_SIGN_Z = -1` 상수를 도입해 IMU2 raw 읽기 직후 적용하여 모든 downstream 로직(bias 측정, fusion, 적응 필터)이 IMU1/drone frame에서 동작하도록 함.
 - **런타임 바이어스 추정의 위험**: 시동 직전 motor idle 상태에서만 업데이트하므로 propeller wash 영향 없음. 단, `base_throttle < 1100` 임계치는 실제 disarmed 시 보내는 1000 값을 기준으로 안전.
