@@ -218,7 +218,19 @@ static void calibrate_bias() {
 // ==========================================================
 // 6. PID task (Core 1, 1kHz) — single IMU read for now
 // ==========================================================
-const float ALPHA_COMP = 0.995f;  // temporary; replaced in Task 5
+const float ACCEL_DEV_SOFT = 0.1f;   // G
+const float ACCEL_DEV_HARD = 0.3f;   // G
+const float ALPHA_STATIC   = 0.99f;
+const float ALPHA_NORMAL   = 0.995f;
+const float ALPHA_DYNAMIC  = 0.999f;
+
+static inline float compute_alpha(float ax, float ay, float az) {
+  float mag = sqrtf(ax*ax + ay*ay + az*az);
+  float dev = fabsf(mag - 1.0f);
+  if      (dev < ACCEL_DEV_SOFT) return ALPHA_STATIC;
+  else if (dev < ACCEL_DEV_HARD) return ALPHA_NORMAL;
+  else                            return ALPHA_DYNAMIC;
+}
 
 void pid_task(void *pvParameters) {
   const unsigned long LOOP_INTERVAL = 1000;
@@ -282,8 +294,9 @@ void pid_task(void *pvParameters) {
 
     float accAngleX = atan2f(lpf_ay, sqrtf(lpf_ax*lpf_ax + lpf_az*lpf_az)) * 180.0f / PI;
     float accAngleY = atan2f(-lpf_ax, sqrtf(lpf_ay*lpf_ay + lpf_az*lpf_az)) * 180.0f / PI;
-    angleX = ALPHA_COMP * (angleX + lpf_gx * dt) + (1.0f - ALPHA_COMP) * accAngleX;
-    angleY = ALPHA_COMP * (angleY + lpf_gy * dt) + (1.0f - ALPHA_COMP) * accAngleY;
+    float alpha = compute_alpha(lpf_ax, lpf_ay, lpf_az);
+    angleX = alpha * (angleX + lpf_gx * dt) + (1.0f - alpha) * accAngleX;
+    angleY = alpha * (angleY + lpf_gy * dt) + (1.0f - alpha) * accAngleY;
     if (fabsf(lpf_gz) > YAW_DEADZONE) angleZ += lpf_gz * dt;
 
     if (check_imu_frozen() || check_rc_timeout() || check_attitude() || safety_lock) {
@@ -453,7 +466,7 @@ void setup() {
   xTaskCreatePinnedToCore(pid_task, "PID", 4096, NULL, 1, NULL, 1);
   xTaskCreatePinnedToCore(udp_task, "UDP", 4096, NULL, 0, NULL, 0);
 
-  Serial.println("SYSTEM READY (Task 3: bias calibration)");
+  Serial.println("SYSTEM READY (Task 5: adaptive complementary filter)");
 }
 
 void loop() {
