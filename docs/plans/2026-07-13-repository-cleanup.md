@@ -61,7 +61,7 @@ ESP32Servo/LEDC PWM, Python 3 standard library, pandas, matplotlib, pygame.
 Run:
 
 ```bash
-for path in \
+for candidate in \
   .codex/probe \
   .claude/probe \
   .gemini/settings.json \
@@ -71,8 +71,8 @@ for path in \
   scripts/__pycache__/probe.pyc \
   scratch.swp \
   scratch.kate-swp; do
-  git check-ignore --no-index -q "$path" || {
-    echo "NOT_IGNORED $path"
+  git check-ignore --no-index -q "$candidate" || {
+    echo "NOT_IGNORED $candidate"
     exit 1
   }
 done
@@ -122,7 +122,10 @@ Expected: exit 0 with no `NOT_IGNORED` output. Then run:
 git status --short --ignored | rg '!! (\.codex/|AGENTS\.md|firmware/examples/\.codex/|firmware/examples/AGENTS\.md)'
 ```
 
-Expected: existing local agent paths appear only with `!!`, never `??`.
+Expected: if those local paths exist in the checkout, they appear only with
+`!!`, never `??`. No output is also valid in an isolated worktree where the
+local-only paths are absent; the hypothetical-path assertion above remains the
+authoritative check.
 
 - [ ] **Step 5: Commit the local-state cleanup**
 
