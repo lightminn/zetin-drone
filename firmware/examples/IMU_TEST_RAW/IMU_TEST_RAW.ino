@@ -5,10 +5,10 @@
 // ==========================================
 // 핀 설정 (사용하시는 보드에 맞게 확인)
 // ==========================================
-#define SPI_CS   10
-#define SPI_MOSI 11
-#define SPI_MISO 13
-#define SPI_SCK  12
+#define SPI_CS   5   // 아무 출력 핀이나 가능 (보통 5번 많이 씀)
+#define SPI_MOSI 23
+#define SPI_MISO 19
+#define SPI_SCK  18
 
 ICM42670 IMU(SPI, SPI_CS);
 
@@ -20,18 +20,19 @@ void setup() {
   SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI, SPI_CS);
 
   // IMU 초기화
-  int ret = IMU.begin();
-  if (ret != 0) {
-    while (1) {
-      Serial.println("❌ IMU 연결 실패! 배선 확인하세요.");
-      delay(1000);
-    }
+int ret = IMU.begin();
+Serial.printf("IMU.begin() returned: %d\n", ret);
+if (ret != 0) {
+  while (1) {
+    Serial.println("❌ IMU 연결 실패");
+    delay(1000);
   }
+}
 
   // 센서 설정 (범위 설정 중요)
   // 가속도: +/- 16G (진동 보려고 넓게 잡음)
   // 자이로: +/- 2000 dps (빠른 회전 보려고 넓게 잡음)
-  IMU.startAccel(1600, 16); 
+  IMU.startAccel(1600, 16);
   IMU.startGyro(1600, 2000);
 
   Serial.println("Roll(g),Pitch(g),Yaw(g),GyroRoll(dps),GyroPitch(dps),GyroYaw(dps)");

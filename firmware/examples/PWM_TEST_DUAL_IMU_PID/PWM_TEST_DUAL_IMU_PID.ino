@@ -7,12 +7,17 @@
 // ==========================================================
 // 1. Tuning parameters (unchanged from single-IMU version)
 // ==========================================================
-const float LPF_ALPHA_ACC  = 0.10f;
+// Accel LPF off (=1.0): rely on ICM42670 internal filter for accel.
+// Gyro LPF re-enabled at 0.5 to keep the Kd (rate) term from amplifying
+// prop-vibration noise on the raw gyro (LPF was off; Kd needs smoothing).
+const float LPF_ALPHA_ACC  = 1.00f;
 const float LPF_ALPHA_GYRO = 0.50f;
 
+// Restored to the known-flying single-IMU values. Kd=0 (no rate damping)
+// was the cause of the weak-leveling / divergent-flip behavior.
 volatile float Kp_Roll  = 2.5f,  Ki_Roll  = 0.005f, Kd_Roll  = 1.2f;
 volatile float Kp_Pitch = 2.5f,  Ki_Pitch = 0.005f, Kd_Pitch = 1.2f;
-volatile float Kp_Yaw   = 3.5f,  Ki_Yaw   = 0.0f,   Kd_Yaw   = 0.0f;
+volatile float Kp_Yaw   = 0.0f,  Ki_Yaw   = 0.0f,   Kd_Yaw   = 0.0f;
 
 volatile int  base_throttle = 1000;
 volatile int  min_throttle  = 1050;
@@ -242,19 +247,23 @@ void pid_task(void *pvParameters) {
   IMU1.getDataFromRegisters(e1);
   IMU2.getDataFromRegisters(e2);
 
-  float gx1 =                  e1.gyro[0]  * GYRO_SCALE - gyro_bias1[0];
-  float gy1 =                  e1.gyro[1]  * GYRO_SCALE - gyro_bias1[1];
-  float gz1 =                  e1.gyro[2]  * GYRO_SCALE - gyro_bias1[2];
-  float gx2 = IMU2_SIGN_X    * e2.gyro[0]  * GYRO_SCALE - gyro_bias2[0];
-  float gy2 = IMU2_SIGN_Y    * e2.gyro[1]  * GYRO_SCALE - gyro_bias2[1];
-  float gz2 = IMU2_SIGN_Z    * e2.gyro[2]  * GYRO_SCALE - gyro_bias2[2];
-
-  lpf_ax =  ((e1.accel[0] + IMU2_SIGN_X * e2.accel[0]) * 0.5f) * ACCEL_SCALE;
-  lpf_ay = -((e1.accel[1] + IMU2_SIGN_Y * e2.accel[1]) * 0.5f) * ACCEL_SCALE;
-  lpf_az =  ((e1.accel[2] + IMU2_SIGN_Z * e2.accel[2]) * 0.5f) * ACCEL_SCALE;
-  lpf_gx =  (gx1 + gx2) * 0.5f;
-  lpf_gy = -(gy1 + gy2) * 0.5f;
-  lpf_gz =  (gz1 + gz2) * 0.5f;
+  {
+    // Initial LPF seed — same body-frame mapping as the runtime loop below.
+    float gx1 =                  e1.gyro[0]  * GYRO_SCALE - gyro_bias1[0];
+    float gy1 =                  e1.gyro[1]  * GYRO_SCALE - gyro_bias1[1];
+    float gz1 =                  e1.gyro[2]  * GYRO_SCALE - gyro_bias1[2];
+    float gx2 = IMU2_SIGN_X    * e2.gyro[0]  * GYRO_SCALE - gyro_bias2[0];
+    float gy2 = IMU2_SIGN_Y    * e2.gyro[1]  * GYRO_SCALE - gyro_bias2[1];
+    float gz2 = IMU2_SIGN_Z    * e2.gyro[2]  * GYRO_SCALE - gyro_bias2[2];
+    float sens_gx = (gx1 + gx2) * 0.5f;
+    float sens_gy = (gy1 + gy2) * 0.5f;
+    float sens_gz = (gz1 + gz2) * 0.5f;
+    float sens_ax = (e1.accel[0] + IMU2_SIGN_X * e2.accel[0]) * 0.5f * ACCEL_SCALE;
+    float sens_ay = (e1.accel[1] + IMU2_SIGN_Y * e2.accel[1]) * 0.5f * ACCEL_SCALE;
+    float sens_az = (e1.accel[2] + IMU2_SIGN_Z * e2.accel[2]) * 0.5f * ACCEL_SCALE;
+    lpf_gx = -sens_gy;  lpf_gy =  sens_gx;  lpf_gz = -sens_gz;
+    lpf_ax =  sens_ay;  lpf_ay = -sens_ax;  lpf_az =  sens_az;
+  }
 
   while (true) {
     unsigned long now = micros();
@@ -264,7 +273,7 @@ void pid_task(void *pvParameters) {
     IMU1.getDataFromRegisters(e1);
     IMU2.getDataFromRegisters(e2);
 
-    // Sign-corrected (drone-frame) gyro reads, then subtract bias
+    // Per-IMU bias-corrected gyro in IMU1 sensor frame (IMU2 axis-sign applied).
     float gx1 =                  e1.gyro[0]  * GYRO_SCALE - gyro_bias1[0];
     float gy1 =                  e1.gyro[1]  * GYRO_SCALE - gyro_bias1[1];
     float gz1 =                  e1.gyro[2]  * GYRO_SCALE - gyro_bias1[2];
@@ -272,14 +281,26 @@ void pid_task(void *pvParameters) {
     float gy2 = IMU2_SIGN_Y    * e2.gyro[1]  * GYRO_SCALE - gyro_bias2[1];
     float gz2 = IMU2_SIGN_Z    * e2.gyro[2]  * GYRO_SCALE - gyro_bias2[2];
 
-    // Accel: average sign-corrected reads, then apply drone Y flip at the end
-    raw_ax =  ((e1.accel[0] + IMU2_SIGN_X * e2.accel[0]) * 0.5f) * ACCEL_SCALE;
-    raw_ay = -((e1.accel[1] + IMU2_SIGN_Y * e2.accel[1]) * 0.5f) * ACCEL_SCALE;
-    raw_az =  ((e1.accel[2] + IMU2_SIGN_Z * e2.accel[2]) * 0.5f) * ACCEL_SCALE;
-    // Gyro: average bias-corrected per-IMU values, then apply drone Y flip
-    raw_gx =  (gx1 + gx2) * 0.5f;
-    raw_gy = -(gy1 + gy2) * 0.5f;
-    raw_gz =  (gz1 + gz2) * 0.5f;
+    // Sensor-frame averaged IMU readings.
+    float sens_gx = (gx1 + gx2) * 0.5f;
+    float sens_gy = (gy1 + gy2) * 0.5f;
+    float sens_gz = (gz1 + gz2) * 0.5f;
+    float sens_ax = (e1.accel[0] + IMU2_SIGN_X * e2.accel[0]) * 0.5f * ACCEL_SCALE;
+    float sens_ay = (e1.accel[1] + IMU2_SIGN_Y * e2.accel[1]) * 0.5f * ACCEL_SCALE;
+    float sens_az = (e1.accel[2] + IMU2_SIGN_Z * e2.accel[2]) * 0.5f * ACCEL_SCALE;
+
+    // Body-frame remap (verified in DUAL_IMU_PID_DEBUG):
+    //   drone X (roll)  = -sensor Y
+    //   drone Y (pitch) =  sensor X
+    //   drone Z (yaw)   = -sensor Z   (CW from above is +)
+    // After this point, raw_* and downstream lpf_*, accAngle, PID, motor
+    // mixing all work in standard body frame.
+    raw_gx = -sens_gy;
+    raw_gy =  sens_gx;
+    raw_gz = -sens_gz;
+    raw_ax =  sens_ay;
+    raw_ay = -sens_ax;
+    raw_az =  sens_az;
 
     lpf_ax = LPF_ALPHA_ACC  * raw_ax + (1.0f - LPF_ALPHA_ACC)  * lpf_ax;
     lpf_ay = LPF_ALPHA_ACC  * raw_ay + (1.0f - LPF_ALPHA_ACC)  * lpf_ay;
@@ -289,7 +310,7 @@ void pid_task(void *pvParameters) {
     lpf_gz = LPF_ALPHA_GYRO * raw_gz + (1.0f - LPF_ALPHA_GYRO) * lpf_gz;
 
     float dt = (now - lastTime) / 1000000.0f;
-    if (dt > 0.002f) dt = 0.001f;
+    if (dt > 0.01f) dt = 0.001f;
     lastTime = now;
 
     float accAngleX = atan2f(lpf_ay, sqrtf(lpf_ax*lpf_ax + lpf_az*lpf_az)) * 180.0f / PI;
@@ -438,7 +459,7 @@ void setup() {
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
   udp.begin(UDP_PORT);
 
-  SPI.begin(12, 13, 11, SPI_CS1);
+  SPI.begin(12, 13, 11, -1);
 
   bool esc_ok = ledcAttach(pinM1, ESC_FREQ, ESC_RES)
              && ledcAttach(pinM2, ESC_FREQ, ESC_RES)

@@ -17,9 +17,9 @@ def receive_thread():
             pass
 
 # 수신 스레드 시작
-t = threading.Thread(target=receive_thread)
-t.daemon = True
-t.start()
+# t = threading.Thread(target=receive_thread)
+# t.daemon = True
+# t.start()
 
 print("========== DRONE TUNING CONSOLE ==========")
 print(" Commands:")
