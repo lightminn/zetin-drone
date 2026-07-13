@@ -9,7 +9,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
-from drone_telemetry import (
+from telemetry_schema import (
     CSV_FIELDS,
     active_fault_names,
     parse_telemetry_packet,

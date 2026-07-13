@@ -5,7 +5,7 @@ import sys
 import time
 from pathlib import Path
 
-from drone_telemetry import (
+from telemetry_schema import (
     CSV_FIELDS,
     active_fault_names,
     parse_telemetry_packet,

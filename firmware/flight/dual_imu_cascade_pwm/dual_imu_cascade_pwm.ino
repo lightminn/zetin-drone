@@ -168,7 +168,7 @@ volatile bool     imu1_frozen_now = false;
 volatile bool     imu2_frozen_now = false;
 volatile bool     imu_disagree_now = false;
 
-// 기존 Drone_Control_Dualsense.py 프로토콜 호환용
+// scripts/control_dualsense.py 프로토콜 호환용
 volatile uint32_t lastRcSeq       = 0;
 volatile uint32_t rcTotalPkts     = 0;
 volatile uint32_t rcDroppedPkts   = 0;
@@ -413,7 +413,7 @@ void pid_task(void *pv) {
       continue;
     }
 
-    // 실기 검증된 sensor -> body frame 변환(PWM_TEST_DUAL_IMU_PID와 동일):
+    // 실기 검증된 sensor -> body frame 변환(archive/legacy_flight/dual_imu_pid_pwm과 동일):
     // body roll X=-sensor Y, pitch Y= sensor X, yaw Z=-sensor Z.
     const float bodyGx = -fg[1];
     const float bodyGy =  fg[0];
@@ -627,7 +627,7 @@ static void handleGainCommand(const char *buf) {
   else if (strncmp(buf, "yi", 2) == 0) Ki_Rate_Yaw = value;
   else if (strncmp(buf, "yd", 2) == 0) Kd_Rate_Yaw = value;
 
-  // 기존 Drone_Tuning.py 명령 호환: P/I/D는 새 inner rate PID에 대응
+  // scripts/tune_pid.py 명령 호환: P/I/D는 inner rate PID에 대응
   else if (strncmp(buf, "pa", 2) == 0) { Kp_Rate_Roll = value; Kp_Rate_Pitch = value; }
   else if (strncmp(buf, "ia", 2) == 0) { Ki_Rate_Roll = value; Ki_Rate_Pitch = value; }
   else if (strncmp(buf, "da", 2) == 0) { Kd_Rate_Roll = value; Kd_Rate_Pitch = value; }

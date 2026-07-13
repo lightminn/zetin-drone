@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-dual_imu_pid_debug_receiver.py
+receive_dual_imu_debug.py
 
-Pairs with firmware/examples/DUAL_IMU_PID_DEBUG/DUAL_IMU_PID_DEBUG.ino.
+Pairs with
+firmware/diagnostics/icm42670_dual_loop_debug/icm42670_dual_loop_debug.ino.
 
 Usage:
   1. Connect laptop WiFi to "DUAL_IMU_DEBUG" (password 12345678).
-  2. python3 dual_imu_pid_debug_receiver.py
+  2. python scripts/receive_dual_imu_debug.py
   3. Tilt the drone by hand and watch the per-packet line + 2-second summary.
 
 Each packet (50 ms cadence) shows angles, raw gyro/accel, and four

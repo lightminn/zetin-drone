@@ -1,8 +1,8 @@
 """Shared parser for the drone UDP telemetry and CSV schema.
 
-The first 10 fields are common to legacy firmware.  The first 14 fields keep
-compatibility with PWM_TEST_DUAL_IMU_PID, and fields 14-20 are diagnostics
-added by DUAL_IMU_CASCADE.
+The first 10 fields are common to legacy firmware. The first 14 fields retain
+the format used by firmware/archive/legacy_flight/dual_imu_pid_pwm, and fields
+14-20 are diagnostics added by firmware/flight/dual_imu_cascade_pwm.
 """
 
 import math

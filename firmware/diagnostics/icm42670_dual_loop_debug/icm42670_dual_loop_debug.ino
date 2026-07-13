@@ -3,11 +3,11 @@
 // ----------------------------------------------------------
 // Purpose: collect evidence about loop rate, dt clamp behavior,
 // and adaptive-alpha usage during the dual-IMU + complementary
-// filter pipeline used by PWM_TEST_DUAL_IMU_PID.
+// filter pipeline used by archive/legacy_flight/dual_imu_pid_pwm.
 //
 // Safety: ESCs are held at 1000us (idle) for the whole run.
 // No PID, no motor mixing, no start/stop command.
-// Pair with scripts/dual_imu_pid_debug_receiver.py
+// Pair with scripts/receive_dual_imu_debug.py
 // ==========================================================
 
 #include <Arduino.h>
