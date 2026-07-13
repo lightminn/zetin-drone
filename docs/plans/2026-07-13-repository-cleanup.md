@@ -1027,7 +1027,13 @@ def maintained_markdown_files(repo):
 
 
 def stale_scan_files(repo):
-    files = maintained_markdown_files(repo)
+    # The migration map intentionally contains every legacy token, so it is
+    # validated structurally but excluded from stale-reference rejection.
+    files = [
+        path
+        for path in maintained_markdown_files(repo)
+        if path != repo / "docs/migration_map.md"
+    ]
     files.extend(sorted((repo / "firmware/flight").rglob("*.ino")))
     files.extend(sorted((repo / "firmware/diagnostics").rglob("*.ino")))
     files.extend(sorted((repo / "scripts").glob("*.py")))
