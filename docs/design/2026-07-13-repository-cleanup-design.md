@@ -1,7 +1,7 @@
 # Repository Cleanup Design
 
 **Date:** 2026-07-13  
-**Status:** Archive-first direction approved; pending final document review
+**Status:** Approved for implementation planning
 
 ## 1. Goal
 
