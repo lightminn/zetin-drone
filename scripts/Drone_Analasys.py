@@ -1,129 +1,245 @@
-import pandas as pd
-import matplotlib.pyplot as plt
-import os
-import glob
 import sys
+from pathlib import Path
 
-# ==========================================
-# 1. 가장 최근 CSV 파일 자동 선택
-# ==========================================
-list_of_files = glob.glob('../logs/*.csv') 
+import matplotlib.pyplot as plt
+import pandas as pd
 
-if not list_of_files:
-    print("❌ 현재 폴더에 CSV 파일이 없습니다.")
-    sys.exit()
 
-# 생성 시간 순으로 정렬 -> 가장 최신 파일 선택
-latest_file = max(list_of_files, key=os.path.getctime)
-file_path = latest_file
+SCRIPT_DIR = Path(__file__).resolve().parent
+LOG_DIR = SCRIPT_DIR.parent / "logs"
 
-# ==========================================
-# 2. 데이터 읽기 및 전처리
-# ==========================================
+
+def select_log_file():
+    if len(sys.argv) >= 2:
+        selected = Path(sys.argv[1]).expanduser().resolve()
+        if not selected.is_file():
+            raise FileNotFoundError(f"지정한 CSV 파일이 없습니다: {selected}")
+        return selected
+
+    candidates = list(LOG_DIR.glob("*.csv"))
+    if not candidates:
+        raise FileNotFoundError(f"CSV 파일이 없습니다: {LOG_DIR}")
+    return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
 try:
+    file_path = select_log_file()
     print(f"📂 분석 대상: {file_path}")
-    
-    # CSV 읽기
     df = pd.read_csv(file_path, skipinitialspace=True)
-    df.columns = df.columns.str.strip() # 컬럼명 공백 제거
-    
+    df.columns = df.columns.str.strip()
     if df.empty:
-        print("❌ 파일이 비어있습니다.")
-        sys.exit()
+        raise ValueError("파일이 비어 있습니다")
+except (OSError, ValueError, pd.errors.ParserError) as exc:
+    print(f"❌ 로그 로딩 실패: {exc}")
+    sys.exit(1)
 
-    print(f"✅ 데이터 로딩 완료! ({len(df)} 개 샘플)")
+# 과거 실험 로그에서 사용했을 가능성이 있는 이름을 현재 스키마로 정규화한다.
+column_aliases = {
+    "Fault_IMU": "Fault_Critical",
+    "Scaled": "Mixer_Scaled",
+    "scaled": "Mixer_Scaled",
+    "Active_Imus": "Active_IMUs",
+    "active_imus": "Active_IMUs",
+}
+for old_name, new_name in column_aliases.items():
+    if old_name in df.columns and new_name not in df.columns:
+        df.rename(columns={old_name: new_name}, inplace=True)
 
-except Exception as e:
-    print(f"❌ 파일 읽기 오류: {e}")
-    sys.exit()
+for column in df.columns:
+    if column != "Timestamp":
+        df[column] = pd.to_numeric(df[column], errors="coerce")
 
-# ==========================================
-# 3. 데이터 통계 출력 (상세 분석용)
-# ==========================================
-print("\n" + "="*60)
+print(f"✅ 데이터 로딩 완료! ({len(df)}개 샘플)")
+
+cols_attitude = ["Roll", "Pitch", "Yaw"]
+cols_gyro = ["Gyro_X", "Gyro_Y", "Gyro_Z"]
+cols_accel = ["Accel_X", "Accel_Y", "Accel_Z"]
+cols_control = ["Throttle", "Active_IMUs", "Mixer_Scaled"]
+cols_fault = [
+    "Fault_RC",
+    "Fault_Critical",
+    "Fault_IMU1",
+    "Fault_IMU2",
+    "Fault_Disagree",
+    "Fault_Attitude",
+    "Calibration_OK",
+]
+
+summary_columns = [
+    column
+    for column in cols_attitude + cols_gyro + cols_accel + cols_control
+    if column in df.columns and df[column].notna().any()
+]
+
+print("\n" + "=" * 72)
 print("📊 비행 데이터 요약 통계")
-print("="*60)
+print("=" * 72)
+if summary_columns:
+    print(df[summary_columns].describe().round(3))
+else:
+    print("분석할 수치 열이 없습니다.")
 
-# 보고 싶은 컬럼들 정의
-cols_attitude = ['Roll', 'Pitch', 'Yaw']
-cols_gyro = ['Gyro_X', 'Gyro_Y', 'Gyro_Z']
-cols_accel = ['Accel_X', 'Accel_Y', 'Accel_Z']
-cols_input = ['Throttle']
 
-# 존재하는 컬럼만 필터링
-all_targets = cols_attitude + cols_gyro + cols_accel + cols_input
-available_cols = [c for c in all_targets if c in df.columns]
+def asserted_samples(column, invert=False):
+    if column not in df.columns:
+        return None
+    valid = df[column].dropna()
+    if valid.empty:
+        return None
+    asserted = valid <= 0 if invert else valid > 0
+    return int(asserted.sum()), len(valid)
 
-# 통계 출력 (소수점 2자리)
-print(df[available_cols].describe().round(2))
-print("="*60)
 
-# ==========================================
-# 4. 그래프 그리기 (3단 구성)
-# ==========================================
-# 스타일 설정
-plt.style.use('seaborn-v0_8-darkgrid' if 'seaborn-v0_8-darkgrid' in plt.style.available else 'default')
+print("\n🔎 제어·고장 이벤트")
+scaled_result = asserted_samples("Mixer_Scaled")
+if scaled_result is not None:
+    count, total = scaled_result
+    print(f"  Mixer scaled: {count}/{total} 샘플 ({count / total * 100:.2f}%)")
 
-# 3개의 서브플롯 생성 (높이 12인치)
-fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 12), sharex=True)
-fig.suptitle(f'Flight Analysis: {os.path.basename(file_path)}', fontsize=16, fontweight='bold')
+if "Active_IMUs" in df.columns and df["Active_IMUs"].notna().any():
+    active = df["Active_IMUs"].dropna()
+    degraded = int((active < 2).sum())
+    unavailable = int((active <= 0).sum())
+    print(
+        f"  Active IMUs: 최소 {active.min():.0f}, "
+        f"degraded {degraded}샘플, unavailable {unavailable}샘플"
+    )
 
-x_axis = range(len(df))
+for column in cols_fault:
+    result = asserted_samples(column, invert=(column == "Calibration_OK"))
+    if result is None:
+        continue
+    count, total = result
+    label = "Calibration_Fail" if column == "Calibration_OK" else column
+    print(f"  {label}: {count}/{total} 샘플")
 
-# --- [1] Attitude (자세) ---
-if 'Roll' in df.columns:
-    ax1.plot(x_axis, df['Roll'], label='Roll', color='red', linewidth=1.5)
-if 'Pitch' in df.columns:
-    ax1.plot(x_axis, df['Pitch'], label='Pitch', color='blue', linewidth=1.5)
-if 'Yaw' in df.columns:
-    ax1.plot(x_axis, df['Yaw'], label='Yaw', color='green', linewidth=1.5, linestyle='--')
+if all(column in df.columns for column in ("RC_Total_Pkts", "RC_Dropped_Pkts")):
+    total_series = df["RC_Total_Pkts"].dropna()
+    dropped_series = df["RC_Dropped_Pkts"].dropna()
+    if not total_series.empty and not dropped_series.empty:
+        total = int(total_series.iloc[-1])
+        dropped = int(dropped_series.iloc[-1])
+        rate = dropped / total * 100 if total > 0 else 0.0
+        print(f"  RC packet drops: {dropped}/{total} ({rate:.2f}%)")
+print("=" * 72)
 
-ax1.axhline(0, color='black', linestyle=':', alpha=0.5) # 0도 기준선
-ax1.set_ylabel('Angle (deg)', fontsize=12)
-ax1.set_title('1. Attitude Response', fontsize=14)
-ax1.legend(loc='upper right')
-ax1.grid(True, linestyle='--', alpha=0.7)
-ax1.set_ylim(-60, 60) # 각도 범위 고정 (보기 편하게)
+plt.style.use(
+    "seaborn-v0_8-darkgrid"
+    if "seaborn-v0_8-darkgrid" in plt.style.available
+    else "default"
+)
 
-# --- [2] Gyroscope Raw (진동 분석) ---
-if 'Gyro_X' in df.columns:
-    ax2.plot(x_axis, df['Gyro_X'], label='Gyro X', color='red', alpha=0.6, linewidth=1)
-if 'Gyro_Y' in df.columns:
-    ax2.plot(x_axis, df['Gyro_Y'], label='Gyro Y', color='blue', alpha=0.6, linewidth=1)
-if 'Gyro_Z' in df.columns:
-    ax2.plot(x_axis, df['Gyro_Z'], label='Gyro Z', color='green', alpha=0.6, linewidth=1)
+fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(13, 15), sharex=True)
+fig.suptitle(f"Flight Analysis: {file_path.name}", fontsize=16, fontweight="bold")
+x_axis = pd.RangeIndex(len(df))
 
-ax2.set_ylabel('Angular Rate (dps)', fontsize=12)
-ax2.set_title('2. Gyroscope Raw (Vibration Check)', fontsize=14)
-ax2.legend(loc='upper right')
-ax2.grid(True, linestyle='--', alpha=0.7)
+for column, color, style in (
+    ("Roll", "red", "-"),
+    ("Pitch", "blue", "-"),
+    ("Yaw", "green", "--"),
+):
+    if column in df.columns:
+        ax1.plot(x_axis, df[column], label=column, color=color, linestyle=style, linewidth=1.3)
+ax1.axhline(0, color="black", linestyle=":", alpha=0.5)
+ax1.set_ylabel("Angle (deg)")
+ax1.set_title("1. Attitude Response")
+ax1.set_ylim(-60, 60)
+ax1.legend(loc="upper right")
 
-# --- [3] Accelerometer & Throttle (가속도 및 입력) ---
-# 가속도는 왼쪽 Y축, 스로틀은 오른쪽 Y축 사용
-if 'Accel_X' in df.columns:
-    ax3.plot(x_axis, df['Accel_X'], label='Accel X', color='red', alpha=0.5, linewidth=1)
-if 'Accel_Y' in df.columns:
-    ax3.plot(x_axis, df['Accel_Y'], label='Accel Y', color='blue', alpha=0.5, linewidth=1)
-if 'Accel_Z' in df.columns:
-    ax3.plot(x_axis, df['Accel_Z'], label='Accel Z', color='green', alpha=0.5, linewidth=1)
+for column, color in (
+    ("Gyro_X", "red"),
+    ("Gyro_Y", "blue"),
+    ("Gyro_Z", "green"),
+):
+    if column in df.columns:
+        ax2.plot(x_axis, df[column], label=column, color=color, alpha=0.65, linewidth=0.9)
+ax2.set_ylabel("Angular rate (dps)")
+ax2.set_title("2. Gyroscope (Vibration Check)")
+ax2.legend(loc="upper right")
 
-ax3.set_ylabel('Acceleration (g)', fontsize=12)
-ax3.set_ylim(-2.0, 2.0) # 가속도 보기 편하게 고정
-ax3.legend(loc='upper left')
-ax3.grid(True, linestyle='--', alpha=0.7)
+for column, color in (
+    ("Accel_X", "red"),
+    ("Accel_Y", "blue"),
+    ("Accel_Z", "green"),
+):
+    if column in df.columns:
+        ax3.plot(x_axis, df[column], label=column, color=color, alpha=0.55, linewidth=0.9)
+ax3.set_ylabel("Acceleration (g)")
+ax3.set_ylim(-2.0, 2.0)
+ax3.set_title("3. Accelerometer & Throttle")
+ax3.legend(loc="upper left")
 
-# 스로틀 (오른쪽 축)
 ax3_right = ax3.twinx()
-if 'Throttle' in df.columns:
-    ax3_right.plot(x_axis, df['Throttle'], label='Throttle', color='orange', linewidth=2, linestyle='-')
-    ax3_right.set_ylabel('Throttle (PWM)', color='orange', fontsize=12)
-    ax3_right.tick_params(axis='y', labelcolor='orange')
-    ax3_right.legend(loc='upper right')
-    ax3_right.set_ylim(1000, 2000)
+if "Throttle" in df.columns:
+    ax3_right.plot(x_axis, df["Throttle"], label="Throttle", color="orange", linewidth=1.5)
+    throttle_valid = df["Throttle"].dropna()
+    if not throttle_valid.empty and throttle_valid.max() <= 100:
+        throttle_label = "Throttle (%)"
+        ax3_right.set_ylim(0, 100)
+    else:
+        throttle_label = "Throttle (PWM)"
+        ax3_right.set_ylim(1000, 2000)
+else:
+    throttle_label = "Throttle"
+ax3_right.set_ylabel(throttle_label, color="orange")
+ax3_right.tick_params(axis="y", labelcolor="orange")
+ax3_right.legend(loc="upper right")
 
-ax3.set_title('3. Accelerometer & Throttle Input', fontsize=14)
-ax3.set_xlabel('Sample Count', fontsize=12)
+event_rows = (
+    ("Mixer_Scaled", "Mixer scaled", False, "tab:orange"),
+    ("Fault_RC", "RC fault", False, "tab:red"),
+    ("Fault_Critical", "Critical fault", False, "darkred"),
+    ("Fault_IMU1", "IMU1 fault", False, "tab:purple"),
+    ("Fault_IMU2", "IMU2 fault", False, "tab:pink"),
+    ("Fault_Disagree", "IMU disagree", False, "tab:brown"),
+    ("Fault_Attitude", "Attitude fault", False, "black"),
+    ("Calibration_OK", "Calibration fail", True, "tab:gray"),
+)
 
-# 레이아웃 조정 및 표시
-plt.tight_layout()
+event_labels = []
+event_positions = []
+for column, label, invert, color in event_rows:
+    if column not in df.columns or not df[column].notna().any():
+        continue
+    asserted = df[column].le(0) if invert else df[column].gt(0)
+    position = len(event_labels)
+    event_labels.append(label)
+    event_positions.append(position)
+    event_x = df.index[asserted.fillna(False)]
+    if len(event_x):
+        ax4.scatter(event_x, [position] * len(event_x), marker="|", s=90, color=color)
+
+if event_labels:
+    ax4.set_yticks(event_positions, event_labels)
+    ax4.set_ylim(-0.7, len(event_labels) - 0.3)
+else:
+    ax4.text(
+        0.5,
+        0.5,
+        "Legacy log: no extended fault/status fields",
+        ha="center",
+        va="center",
+        transform=ax4.transAxes,
+    )
+    ax4.set_yticks([])
+
+ax4_active = ax4.twinx()
+if "Active_IMUs" in df.columns and df["Active_IMUs"].notna().any():
+    ax4_active.step(
+        x_axis,
+        df["Active_IMUs"],
+        where="post",
+        color="tab:blue",
+        linewidth=1.5,
+        label="Active IMUs",
+    )
+    ax4_active.legend(loc="upper right")
+ax4_active.set_ylabel("Active IMUs", color="tab:blue")
+ax4_active.set_ylim(-0.1, 2.2)
+ax4_active.set_yticks([0, 1, 2])
+ax4.set_title("4. Saturation, Redundancy & Fault Events")
+ax4.set_xlabel("Sample count")
+ax4.grid(True, axis="x", alpha=0.4)
+
+fig.tight_layout(rect=(0, 0, 1, 0.97))
 plt.show()
