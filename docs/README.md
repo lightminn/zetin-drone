@@ -1,11 +1,20 @@
-# Documents
+# Documentation
 
-이 디렉토리는 ZETIN 드론 프로젝트와 관련된 문서, 발표 자료 및 기록들을 보관합니다.
+## Maintained
 
-## 포함된 파일
+- [Project overview](project_overview.md)
+- [Firmware catalog](firmware_catalog.md)
+- [UDP protocol](udp_protocol.md)
+- [Repository migration map](migration_map.md)
+- [Repository cleanup design](design/2026-07-13-repository-cleanup-design.md)
+- [Repository cleanup implementation plan](plans/2026-07-13-repository-cleanup.md)
 
-- `presentation.c`: 프로젝트 기술 발표 관련 소스 또는 데이터
-- `commit_message.txt`: 프로젝트의 커밋 컨벤션 가이드
-- 기타 프로젝트 설계 및 회의 기록 문서들
+## Historical
 
-전체 프로젝트에 대한 개요는 루트 디렉토리의 [README.md](../README.md)를 참고해 주세요.
+- [2026-05-14 dual-IMU PID design](history/2026-05-14-dual-imu-pid-design.md)
+- [2026-05-14 dual-IMU PID implementation plan](history/2026-05-14-dual-imu-pid-implementation-plan.md)
+
+## Archived
+
+- [PID/DShot presentation snippet](archive/pid_dshot_presentation_snippet.c)
+- [Old commit-message snapshot](archive/commit_message_snapshot.txt)

@@ -1,14 +1,20 @@
 # PWM_TEST_DUAL_IMU_PID Implementation Plan
 
+> Historical document: this describes the superseded dual-IMU PID iteration.
+> Current flight-controller candidate:
+> [`dual_imu_cascade_pwm`](../../firmware/flight/dual_imu_cascade_pwm/).
+> Archived result:
+> [`dual_imu_pid_pwm`](../../firmware/archive/legacy_flight/dual_imu_pid_pwm/).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a new dual-IMU flight controller sketch that eliminates the in-flight drift seen in the single-IMU `PWM_TEST_IMU_PID.ino`, by adding startup gyro bias calibration, runtime bias estimation, dual IMU fusion with fault detection, and an adaptive complementary filter — while keeping the existing UDP protocol with `Drone_Tuning.py` 100% compatible.
+**Goal:** Build a new dual-IMU flight controller sketch that eliminates the in-flight drift seen in the single-IMU `PWM_TEST_IMU_PID.ino`, by adding startup gyro bias calibration, runtime bias estimation, dual IMU fusion with fault detection, and an adaptive complementary filter — while keeping the existing UDP protocol with `scripts/tune_pid.py` 100% compatible.
 
 **Architecture:** Single Arduino .ino file with FreeRTOS 2-task structure (Core 1: PID 1kHz, Core 0: UDP). Two ICM42670 IMUs on shared SPI (CS=10 and CS=9). Each task built incrementally: scaffold → dual read → bias calibration → fusion + fault detection → adaptive alpha → runtime bias estimation → final integration.
 
 **Tech Stack:** Arduino framework on ESP32-S3, ICM42670P library, FreeRTOS, WiFi/UDP, ledcAttach PWM.
 
-**Spec:** [`docs/superpowers/specs/2026-05-14-dual-imu-pid-design.md`](../specs/2026-05-14-dual-imu-pid-design.md)
+**Spec:** [`2026-05-14-dual-imu-pid-design.md`](2026-05-14-dual-imu-pid-design.md)
 
 ## Testing Strategy for Firmware
 
@@ -19,13 +25,15 @@ This is hardware firmware — we cannot run unit tests. Verification at each tas
 
 Compile-failed = block before commit. Hardware verification is documented in each task; user runs it manually and reports back if issues.
 
-## Compile Command (used in every task)
+## Historical compile command (unsupported; do not run)
 
 ```bash
-arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/examples/PWM_TEST_DUAL_IMU_PID/
+arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/archive/legacy_flight/dual_imu_pid_pwm/
 ```
 
-Expected output: ends with `Used library ... Used platform ...` and exit code 0. Any error → fix before committing.
+Historical expected output was `Used library ... Used platform ...` with exit
+code 0. This archived target is no longer build-supported; do not repair or run
+these commands as part of current verification.
 
 ---
 
@@ -33,7 +41,7 @@ Expected output: ends with `Used library ... Used platform ...` and exit code 0.
 
 Single sketch file in new folder, matching existing examples/ pattern:
 
-- **Create:** `firmware/examples/PWM_TEST_DUAL_IMU_PID/PWM_TEST_DUAL_IMU_PID.ino`
+- **Create:** `firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino`
 
 No other files. No headers or library split — keeps cohesion with existing examples and is short enough to hold in context.
 
@@ -44,11 +52,11 @@ No other files. No headers or library split — keeps cohesion with existing exa
 **Goal:** Create the new folder and `.ino` file. Copy the baseline structure from `PWM_TEST_IMU_PID.ino` but with two `ICM42670` instances. Reads only IMU1 (averaging logic deferred to Task 3). This task produces a functionally-equivalent build to the original that already verifies IMU2 can be initialized alongside IMU1.
 
 **Files:**
-- Create: `firmware/examples/PWM_TEST_DUAL_IMU_PID/PWM_TEST_DUAL_IMU_PID.ino`
+- Create: `firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino`
 
 - [ ] **Step 1: Create the folder and file with the scaffold**
 
-Write `firmware/examples/PWM_TEST_DUAL_IMU_PID/PWM_TEST_DUAL_IMU_PID.ino` with this content:
+Write `firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino` with this content:
 
 ```cpp
 #include <Arduino.h>
@@ -432,7 +440,7 @@ void loop() {
 
 Run:
 ```bash
-arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/examples/PWM_TEST_DUAL_IMU_PID/
+arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/archive/legacy_flight/dual_imu_pid_pwm/
 ```
 
 Expected: exit 0, no errors. If errors, fix and re-run until clean.
@@ -444,7 +452,7 @@ User flashes and confirms serial shows `SYSTEM READY (Task 1 scaffold...)` and n
 - [ ] **Step 4: Commit**
 
 ```bash
-git add firmware/examples/PWM_TEST_DUAL_IMU_PID/PWM_TEST_DUAL_IMU_PID.ino
+git add firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino
 git commit -m "feat: scaffold PWM_TEST_DUAL_IMU_PID with dual IMU init"
 ```
 
@@ -455,7 +463,7 @@ git commit -m "feat: scaffold PWM_TEST_DUAL_IMU_PID with dual IMU init"
 **Goal:** Replace the single IMU1 read in `pid_task` with reads from both IMUs and use the simple average. No bias correction or fault detection yet — that comes in Task 3 and Task 4.
 
 **Files:**
-- Modify: `firmware/examples/PWM_TEST_DUAL_IMU_PID/PWM_TEST_DUAL_IMU_PID.ino` (PID task only)
+- Modify: `firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino` (PID task only)
 
 - [ ] **Step 1: Modify the initial read in `pid_task`**
 
@@ -500,17 +508,17 @@ Replace the `Serial.println("SYSTEM READY (Task 1 ...)");` line with:
 - [ ] **Step 4: Compile**
 
 ```bash
-arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/examples/PWM_TEST_DUAL_IMU_PID/
+arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/archive/legacy_flight/dual_imu_pid_pwm/
 ```
 
 - [ ] **Step 5: Hardware verification (user)**
 
-Flash, open Drone_Tuning.py. Observe telemetry: with drone stationary, `angleX`/`angleY` should be near 0 and stable. `raw_gx/y/z` should be similar magnitude as previous single-IMU version (averaging two same-direction IMUs gives the same mean, with less noise).
+Flash, open scripts/tune_pid.py. Observe telemetry: with drone stationary, `angleX`/`angleY` should be near 0 and stable. `raw_gx/y/z` should be similar magnitude as previous single-IMU version (averaging two same-direction IMUs gives the same mean, with less noise).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add firmware/examples/PWM_TEST_DUAL_IMU_PID/PWM_TEST_DUAL_IMU_PID.ino
+git add firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino
 git commit -m "feat: read both IMUs and average raw values"
 ```
 
@@ -523,7 +531,7 @@ git commit -m "feat: read both IMUs and average raw values"
 > **Note (Task 2 fix):** IMU2 is mounted with x and z axes inverted vs IMU1; `IMU2_SIGN_X/Y/Z` constants were added in section 2 in the Task 2 fix. Task 3 must apply these signs at bias measurement so `gyro_bias2` is in the same (IMU1/drone) frame as `gyro_bias1`. Otherwise the bias subtraction during averaging would be in the wrong frame.
 
 **Files:**
-- Modify: `firmware/examples/PWM_TEST_DUAL_IMU_PID/PWM_TEST_DUAL_IMU_PID.ino`
+- Modify: `firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino`
 
 - [ ] **Step 1: Add bias constants in section 2 (after `YAW_DEADZONE` line)**
 
@@ -698,7 +706,7 @@ Important sign note: bias for IMU1 (`gyro_bias1`) was measured on raw `e1.gyro[k
 - [ ] **Step 7: Compile**
 
 ```bash
-arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/examples/PWM_TEST_DUAL_IMU_PID/
+arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/archive/legacy_flight/dual_imu_pid_pwm/
 ```
 
 - [ ] **Step 8: Hardware verification (user)**
@@ -710,7 +718,7 @@ Then leave the drone sitting for 1-2 minutes (do **not** arm) and observe `angle
 - [ ] **Step 9: Commit**
 
 ```bash
-git add firmware/examples/PWM_TEST_DUAL_IMU_PID/PWM_TEST_DUAL_IMU_PID.ino
+git add firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino
 git commit -m "feat: startup gyro bias calibration for both IMUs"
 ```
 
@@ -721,7 +729,7 @@ git commit -m "feat: startup gyro bias calibration for both IMUs"
 **Goal:** Replace single `check_imu_frozen()` with per-IMU frozen detection that allows fallback, plus a new `check_imu_disagree()` that locks safety if the two IMUs disagree significantly.
 
 **Files:**
-- Modify: `firmware/examples/PWM_TEST_DUAL_IMU_PID/PWM_TEST_DUAL_IMU_PID.ino`
+- Modify: `firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino`
 
 - [ ] **Step 1: Add new disagree constants in section 2**
 
@@ -943,7 +951,7 @@ Replace with:
 - [ ] **Step 8: Compile**
 
 ```bash
-arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/examples/PWM_TEST_DUAL_IMU_PID/
+arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/archive/legacy_flight/dual_imu_pid_pwm/
 ```
 
 - [ ] **Step 9: Hardware verification (user)**
@@ -957,7 +965,7 @@ b) **One IMU disconnect test**: With drone powered off, disconnect IMU2 (CS=9). 
 - [ ] **Step 10: Commit**
 
 ```bash
-git add firmware/examples/PWM_TEST_DUAL_IMU_PID/PWM_TEST_DUAL_IMU_PID.ino
+git add firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino
 git commit -m "feat: per-IMU fault detect with fallback and disagree check"
 ```
 
@@ -968,7 +976,7 @@ git commit -m "feat: per-IMU fault detect with fallback and disagree check"
 **Goal:** Replace fixed `ALPHA_COMP = 0.995f` with a function that returns 0.99, 0.995, or 0.999 based on accelerometer deviation from 1G.
 
 **Files:**
-- Modify: `firmware/examples/PWM_TEST_DUAL_IMU_PID/PWM_TEST_DUAL_IMU_PID.ino`
+- Modify: `firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino`
 
 - [ ] **Step 1: Replace `ALPHA_COMP` constant with the three-level constants and threshold constants**
 
@@ -1022,7 +1030,7 @@ Replace with:
 - [ ] **Step 4: Compile**
 
 ```bash
-arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/examples/PWM_TEST_DUAL_IMU_PID/
+arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/archive/legacy_flight/dual_imu_pid_pwm/
 ```
 
 - [ ] **Step 5: Hardware verification (user)**
@@ -1032,7 +1040,7 @@ Flash. With drone stationary, `angleX`/`angleY` in telemetry should be **less dr
 - [ ] **Step 6: Commit**
 
 ```bash
-git add firmware/examples/PWM_TEST_DUAL_IMU_PID/PWM_TEST_DUAL_IMU_PID.ino
+git add firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino
 git commit -m "feat: adaptive complementary filter based on accel magnitude"
 ```
 
@@ -1043,7 +1051,7 @@ git commit -m "feat: adaptive complementary filter based on accel magnitude"
 **Goal:** While the drone is idle (`base_throttle < 1100`) AND actually stationary (`|gyro| < 2 deg/s`), slowly update `gyro_bias1` and `gyro_bias2` with EMA α=0.0005.
 
 **Files:**
-- Modify: `firmware/examples/PWM_TEST_DUAL_IMU_PID/PWM_TEST_DUAL_IMU_PID.ino`
+- Modify: `firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino`
 
 - [ ] **Step 1: Add runtime bias constants in section 2**
 
@@ -1104,7 +1112,7 @@ Add right below (apply IMU2 sign correction so the values match how bias was mea
 - [ ] **Step 5: Compile**
 
 ```bash
-arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/examples/PWM_TEST_DUAL_IMU_PID/
+arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/archive/legacy_flight/dual_imu_pid_pwm/
 ```
 
 - [ ] **Step 6: Hardware verification (user)**
@@ -1114,7 +1122,7 @@ Flash. After boot, leave drone stationary for 10 minutes (idle, do not arm). The
 - [ ] **Step 7: Commit**
 
 ```bash
-git add firmware/examples/PWM_TEST_DUAL_IMU_PID/PWM_TEST_DUAL_IMU_PID.ino
+git add firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino
 git commit -m "feat: runtime slow gyro bias estimation while idle"
 ```
 
@@ -1125,7 +1133,7 @@ git commit -m "feat: runtime slow gyro bias estimation while idle"
 **Goal:** Verify end-to-end behavior on the actual drone. Update the ready message to a final form and confirm the integration. No code changes other than the message.
 
 **Files:**
-- Modify: `firmware/examples/PWM_TEST_DUAL_IMU_PID/PWM_TEST_DUAL_IMU_PID.ino`
+- Modify: `firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino`
 
 - [ ] **Step 1: Update ready message to final form**
 
@@ -1136,13 +1144,13 @@ git commit -m "feat: runtime slow gyro bias estimation while idle"
 - [ ] **Step 2: Compile**
 
 ```bash
-arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/examples/PWM_TEST_DUAL_IMU_PID/
+arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/archive/legacy_flight/dual_imu_pid_pwm/
 ```
 
 - [ ] **Step 3: Hardware verification (user)** — propeller-OFF tests first
 
 a) Power on, confirm `[CALIB] OK` and `PWM_TEST_DUAL_IMU_PID READY`.
-b) Launch `Drone_Tuning.py`. Confirm telemetry arrives, `fault_imu=0`, all 14 fields parse.
+b) Launch `scripts/tune_pid.py`. Confirm telemetry arrives, `fault_imu=0`, all 14 fields parse.
 c) Send `start` via the tuning script. Confirm motors arm (base_throttle=1100), `fault_imu=0`. Send `stop`. Confirm disarm.
 d) Test PID tuning commands: `pa 2.0`, then `pa 2.5`. Confirm the script reports updated gains.
 
@@ -1154,6 +1162,6 @@ b) If drift remains, capture `angleX`/`angleY` from telemetry log and report —
 - [ ] **Step 5: Commit**
 
 ```bash
-git add firmware/examples/PWM_TEST_DUAL_IMU_PID/PWM_TEST_DUAL_IMU_PID.ino
+git add firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino
 git commit -m "chore: finalize PWM_TEST_DUAL_IMU_PID ready message"
 ```

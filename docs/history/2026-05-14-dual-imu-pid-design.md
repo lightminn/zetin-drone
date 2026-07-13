@@ -1,5 +1,11 @@
 # PWM_TEST_DUAL_IMU_PID Design Spec
 
+> Historical document: this describes the superseded dual-IMU PID iteration.
+> Current flight-controller candidate:
+> [`dual_imu_cascade_pwm`](../../firmware/flight/dual_imu_cascade_pwm/).
+> Archived result:
+> [`dual_imu_pid_pwm`](../../firmware/archive/legacy_flight/dual_imu_pid_pwm/).
+
 **Date:** 2026-05-14
 **Status:** Approved, ready for implementation plan
 
@@ -9,13 +15,13 @@
 
 ### Non-goals
 - Kalman 필터 / 가중 평균 등 복잡한 센서 융합 (단순 평균 + 검증으로 충분)
-- 기존 UDP 프로토콜 / Drone_Tuning.py 변경 (호환성 유지)
+- 기존 UDP 프로토콜 / scripts/tune_pid.py 변경 (호환성 유지)
 - 가속도계 바이어스 보정 (1G 기준점이 있어 불필요)
 - 자기계(magnetometer) 융합
 
 ## 2. New Folder & File
 
-- 폴더: `firmware/examples/PWM_TEST_DUAL_IMU_PID/`
+- 폴더: `firmware/archive/legacy_flight/dual_imu_pid_pwm/`
 - 파일: `PWM_TEST_DUAL_IMU_PID.ino`
 
 ## 3. Architecture Overview
@@ -24,7 +30,7 @@
 - **Core 1**: `pid_task` (1kHz 메인 제어 루프) + `loop()` (50ms 텔레메트리)
 - **Core 0**: `udp_task` (RC/명령 수신)
 
-WiFi/UDP 프로토콜과 텔레메트리 14필드 형식은 100% 호환 → `Drone_Tuning.py` 무수정 동작.
+WiFi/UDP 프로토콜과 텔레메트리 14필드 형식은 100% 호환 → `scripts/tune_pid.py` 무수정 동작.
 
 ### 하드웨어 핀
 - SPI: SCK=12, MISO=13, MOSI=11
@@ -177,7 +183,7 @@ loop() (Core 1): 50ms 텔레메트리, 기존 14필드 형식
 3. **한쪽 IMU disconnect 테스트**: CS=10 또는 CS=9 케이블 빼고 시동 → 시리얼에 fault 메시지 + 정상 비행 가능
 4. **두 IMU 불일치 시뮬레이션**: 한쪽 IMU만 손으로 흔들기 → safety_lock 동작 확인
 5. **실비행**: 호버링 중 드리프트가 기존 대비 줄어드는지 확인
-6. **튜닝 호환성**: `Drone_Tuning.py`로 PID 게인 변경 시 정상 적용되는지 확인
+6. **튜닝 호환성**: `scripts/tune_pid.py`로 PID 게인 변경 시 정상 적용되는지 확인
 
 ## 11. Open Questions / Risks
 
