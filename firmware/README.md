@@ -1,25 +1,59 @@
-# Firmware (펌웨어)
+# Firmware
 
-이 디렉토리는 드론의 핵심 제어 로직을 담당하는 펌웨어 소스 코드를 포함하고 있습니다. PlatformIO 및 아두이노 프레임워크를 기반으로 구성되어 있습니다.
+이 디렉터리의 현행 범위는 **ESP32-S3 + ICM42670 + PWM 제어**뿐이다.
+비행 후보 펌웨어와 하드웨어 진단 스케치만 아래 경로에서 유지한다.
+나머지 실험 코드는 [`archive/`](archive/README.md)에 원형 보관하며 빌드
+지원 대상으로 보지 않는다.
 
-## 디렉토리 구조
+## 현행 비행 펌웨어
 
-- `src/`: 드론의 주 실행 로직이 담긴 소스 코드 (`main.cpp`, `motor.cpp`, `sensor.cpp` 등).
-- `lib/`: 센서 제어, 모터 드라이버, 통신 프로토콜 등을 위한 사용자 정의 라이브러리.
-- `include/`: 프로젝트 전반에서 사용되는 헤더 파일.
-- `examples/`: 각 하드웨어 모듈별 독립 기능 테스트를 위한 코드 모음.
-    - `DSHOT_TEST`: DShot 통신 방식의 모터 제어 테스트.
-    - `PWM_TEST`: PWM 방식의 모터 제어 테스트.
-    - `BMM_TEST`: 지자기 센서 테스트.
-    - `US100_TEST`: 초음파 거리 센서 테스트.
-- `platformio_config/`: PlatformIO 빌드 설정 파일 (`platformio.ini`).
+- [`flight/dual_imu_cascade_pwm/`](flight/dual_imu_cascade_pwm/): 듀얼
+  ICM42670, 바깥쪽 자세 루프와 안쪽 각속도 루프, 4채널 PWM을 사용하는
+  현행 비행 제어 후보. 실기 비행 안정성이 검증 완료됐다는 뜻은 아니다.
 
-## 개발 환경 설정
+핀 배치: 모터 FL/RR/FR/RL = GPIO 4/5/6/7, SPI SCK/MISO/MOSI =
+GPIO 12/13/11, IMU1/IMU2 CS = GPIO 10/9.
 
-1. **PlatformIO 설치**: VS Code 확장에서 PlatformIO IDE를 설치합니다.
-2. **보드 설정**: `platformio_config/platformio.ini` 파일을 확인하여 대상 보드(예: ESP32)에 맞는 설정을 확인하세요.
-3. **빌드 및 업로드**: IDE의 빌드 버튼을 눌러 컴파일하고, 업로드 버튼을 눌러 드론에 펌웨어를 기록합니다.
+## 현행 진단 스케치
 
-## 주의 사항
-- 모터 테스트를 진행할 때는 반드시 프로펠러를 제거한 상태에서 진행하십시오.
-- 배터리 전원 연결 시 전압과 극성에 유의하십시오.
+- [`diagnostics/motor_pwm_bench/`](diagnostics/motor_pwm_bench/): GPIO
+  4/5/6/7의 4개 ESC PWM 출력 벤치 테스트.
+- [`diagnostics/icm42670_single_raw/`](diagnostics/icm42670_single_raw/):
+  단일 ICM42670 원시값 출력. SPI SCK/MISO/MOSI/CS = GPIO 18/19/23/5.
+  이 배치는 PCB v1.5.2 진단과 다르다.
+- [`diagnostics/icm42670_dual_raw/`](diagnostics/icm42670_dual_raw/): 듀얼
+  ICM42670 원시값 출력. SPI SCK/MISO/MOSI = GPIO 12/13/11, CS =
+  GPIO 10/9.
+- [`diagnostics/icm42670_dual_loop_debug/`](diagnostics/icm42670_dual_loop_debug/):
+  듀얼 IMU 자세/각속도 루프와 UDP 진단 텔레메트리. 모터 = GPIO
+  4/5/6/7, SPI SCK/MISO/MOSI = GPIO 12/13/11, CS = GPIO 10/9.
+- [`diagnostics/board_v1_5_2_dual_imu/`](diagnostics/board_v1_5_2_dual_imu/):
+  PCB v1.5.2 듀얼 ICM42670 확인. SPI SCK/MISO/MOSI = GPIO 12/13/11,
+  CS = GPIO 10/9.
+
+## 빌드
+
+Arduino CLI와 ESP32-S3 보드 패키지를 사용한다. 빌드 산출물은 저장소 밖
+`/tmp`에 둔다.
+
+```bash
+sketch=firmware/flight/dual_imu_cascade_pwm
+name=$(basename "$sketch")
+arduino-cli compile --warnings all \
+  --fqbn esp32:esp32:esp32s3 \
+  --build-path "/tmp/zetin-$name" \
+  "$sketch"
+```
+
+진단 스케치도 `sketch` 경로만 바꿔 같은 방식으로 빌드한다. 보관 코드의
+의존성이나 빌드는 복구하지 않는다.
+
+## 안전
+
+- 모터를 구동하는 모든 벤치 시험과 펌웨어 업로드는 프로펠러를 제거한
+  상태에서 진행한다.
+- 배터리 연결 전에 전압과 극성을 다시 확인한다.
+- 모터 번호, 회전 방향, PWM 최소값과 비상 정지 동작을 확인하기 전에는
+  기체를 띄우지 않는다.
+- [`archive/`](archive/README.md)의 모터 제어 코드는 특히 안전하다고
+  가정하면 안 된다.
