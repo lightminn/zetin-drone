@@ -1,9 +1,9 @@
-# Archived PC tools
+# 보관된 PC 도구
 
-These scripts target deprecated GPS/TCP experiments and are retained only for
-history. They are not part of the current UDP telemetry/control workflow and
-are not included in current Python verification.
+이 스크립트들은 폐기된 GPS/TCP 실험을 대상으로 하며 역사 목적으로만
+보존된다. 현행 UDP 텔레메트리/제어 워크플로의 일부가 아니며 현행 Python
+검증에도 포함되지 않는다.
 
-`test_tcp_legacy.py` was intended to check drone-to-PC TCP packet latency and
-integrity while one endpoint acted as the listening server. It predates the
-current UDP 4210 workflow and is not a supported protocol test.
+`test_tcp_legacy.py`는 한쪽 엔드포인트가 수신 서버 역할을 하는 상태에서
+드론→PC TCP 패킷 지연과 무결성을 확인하려던 도구였다. 현행 UDP 4210
+워크플로 이전 것이며 지원되는 프로토콜 테스트가 아니다.

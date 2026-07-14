@@ -1,8 +1,8 @@
-# Archived firmware
+# 보관된 펌웨어
 
-Everything below this directory is preserved for history only. It is not part
-of the supported ESP32-S3 + ICM42670 + PWM build path, is not compile-verified,
-and may contain missing dependencies, obsolete pinouts, or unsafe behavior.
+이 디렉터리 아래의 모든 코드는 역사 보존 목적으로만 유지된다. 지원되는
+ESP32-S3 + ICM42670 + PWM 빌드 경로에 속하지 않으며, 컴파일 검증되지
+않았고, 누락된 의존성·구식 핀 배치·위험한 동작을 포함할 수 있다.
 
-Do not flash archived motor-control code without reviewing it completely and
-removing propellers. Current firmware is linked from [`../README.md`](../README.md).
+보관된 모터 제어 코드는 전체를 검토하고 프로펠러를 제거하기 전에는 절대
+플래시하지 않는다. 현행 펌웨어는 [`../README.md`](../README.md)에서 연결된다.

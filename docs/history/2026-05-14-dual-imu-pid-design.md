@@ -1,30 +1,30 @@
-# PWM_TEST_DUAL_IMU_PID Design Spec
+# PWM_TEST_DUAL_IMU_PID 설계 명세
 
-> Historical document: this describes the superseded dual-IMU PID iteration.
-> Current flight-controller candidate:
+> 과거 문서: 이 문서는 대체된 듀얼 IMU PID 반복 작업을 설명한다.
+> 현행 비행 제어 후보:
 > [`dual_imu_cascade_pwm`](../../firmware/flight/dual_imu_cascade_pwm/).
-> Archived result:
+> 보관된 결과물:
 > [`dual_imu_pid_pwm`](../../firmware/archive/legacy_flight/dual_imu_pid_pwm/).
 
-**Date:** 2026-05-14
-**Status:** Approved, ready for implementation plan
+**날짜:** 2026-05-14
+**상태:** 승인됨, 구현 계획 준비 완료
 
-## 1. Goal
+## 1. 목표
 
 기존 `PWM_TEST_IMU_PID.ino` (단일 IMU)에서 발생하던 **비행 중 한쪽으로 쏠리는 드리프트 문제**를 근본적으로 해결하면서, `DUAL_IMU_RAW_TEST.ino`에서 검증된 듀얼 IMU 하드웨어를 활용한 **새 비행 제어 코드**를 작성한다.
 
-### Non-goals
+### 비목표
 - Kalman 필터 / 가중 평균 등 복잡한 센서 융합 (단순 평균 + 검증으로 충분)
 - 기존 UDP 프로토콜 / scripts/tune_pid.py 변경 (호환성 유지)
 - 가속도계 바이어스 보정 (1G 기준점이 있어 불필요)
 - 자기계(magnetometer) 융합
 
-## 2. New Folder & File
+## 2. 새 폴더와 파일
 
 - 폴더: `firmware/archive/legacy_flight/dual_imu_pid_pwm/`
 - 파일: `PWM_TEST_DUAL_IMU_PID.ino`
 
-## 3. Architecture Overview
+## 3. 아키텍처 개요
 
 기존 2-task 구조 그대로:
 - **Core 1**: `pid_task` (1kHz 메인 제어 루프) + `loop()` (50ms 텔레메트리)
@@ -46,9 +46,9 @@ WiFi/UDP 프로토콜과 텔레메트리 14필드 형식은 100% 호환 → `scr
 
 이 부호는 IMU2 raw 값 읽은 직후 곱해 IMU1/drone frame으로 변환. 이후 bias 측정, fusion, 적응 필터 등 모든 downstream 로직은 정렬된 값으로 동작.
 
-## 4. Gyro Bias Calibration (드리프트 해결 핵심)
+## 4. 자이로 바이어스 보정 (드리프트 해결 핵심)
 
-### 4.1 Startup Calibration
+### 4.1 시동 시 보정
 `setup()`에서 IMU 두 개 초기화 직후, PID 태스크 생성 **전에** 수행:
 
 1. 2000샘플 (≈2초) 동안 두 IMU의 자이로 raw값 수집
@@ -59,7 +59,7 @@ WiFi/UDP 프로토콜과 텔레메트리 14필드 형식은 100% 호환 → `scr
 
 가속도계 바이어스는 측정/보정하지 않음 (1G 기준점 활용).
 
-### 4.2 Runtime Slow Estimation
+### 4.2 런타임 느린 추정
 PID 루프 안에서 매 사이클:
 
 - **조건 동시 만족**:
@@ -71,7 +71,7 @@ PID 루프 안에서 매 사이클:
 ### 4.3 자이로 사용 시점
 모든 자이로 사용 직전에 `gx_corrected = raw_gx - gyro_bias[x]` 적용. raw값은 텔레메트리에 보정 후 값으로 전송.
 
-## 5. Dual IMU Fusion
+## 5. 듀얼 IMU 융합
 
 ### 5.1 매 루프 동작 순서
 1. IMU1, IMU2에서 각각 raw accel/gyro 읽기 (SPI 두 번)
@@ -86,7 +86,7 @@ PID 루프 안에서 매 사이클:
 - 랜덤 진동 노이즈 √2배 감소
 - 한쪽 IMU 갑작스러운 글리치를 절반 흡수
 
-## 6. Adaptive Complementary Filter
+## 6. 적응형 상보 필터
 
 기존 `ALPHA_COMP = 0.995` (고정) → 가속도 크기 기반 동적 α:
 
@@ -104,7 +104,7 @@ else:                      alpha = 0.999   (격동, 가속도 거의 무시)
 
 디버깅 편의를 위해 부드러운 보간이 아닌 step 방식 사용.
 
-## 7. Fault Detection
+## 7. 고장 검출
 
 ### 7.1 기존 유지
 - `check_rc_timeout()`: RC 패킷 500ms 이상 미수신 → safety_lock
@@ -124,7 +124,7 @@ else:                      alpha = 0.999   (격동, 가속도 거의 무시)
 ### 7.4 텔레메트리 호환성
 기존 14필드 그대로 유지. `fault_imu` 비트는 `fault_imu1 || fault_imu2`로 OR. 개별 IMU 고장은 시리얼 로그로만 출력.
 
-## 8. Data Flow
+## 8. 데이터 흐름
 
 ```
 setup()
@@ -153,7 +153,7 @@ udp_task (Core 0): 기존과 동일
 loop() (Core 1): 50ms 텔레메트리, 기존 14필드 형식
 ```
 
-## 9. Constants Summary
+## 9. 상수 요약
 
 기존 PID 게인은 그대로 유지 (Kp_Roll=2.5, Ki_Roll=0.005, Kd_Roll=1.2 등).
 
@@ -176,7 +176,7 @@ loop() (Core 1): 50ms 텔레메트리, 기존 14필드 형식
 
 `ALPHA_COMP` 상수는 삭제, 대신 동적 계산 함수 사용.
 
-## 10. Testing Plan
+## 10. 테스트 계획
 
 1. **부팅 시리얼 로그**: 두 IMU의 바이어스 3축 값이 합리적 범위 (-2 ~ +2°/s) 인지 확인
 2. **정지 상태 yaw 드리프트**: `start` 명령 없이 5분간 angleZ가 얼마나 변하는지 (기존 대비 개선)
@@ -185,7 +185,7 @@ loop() (Core 1): 50ms 텔레메트리, 기존 14필드 형식
 5. **실비행**: 호버링 중 드리프트가 기존 대비 줄어드는지 확인
 6. **튜닝 호환성**: `scripts/tune_pid.py`로 PID 게인 변경 시 정상 적용되는지 확인
 
-## 11. Open Questions / Risks
+## 11. 미해결 질문 / 리스크
 
 - **SPI 두 번 읽기 시 1kHz 유지 가능한지**: 단일 IMU 시점에 충분히 마진이 있었음. 두 번 읽어도 SPI ≥ 8MHz면 < 200µs 예상. 1kHz 루프 (1000µs) 안에 여유 있을 것. 실측으로 확인 필요.
 - **두 IMU 부착 방향**: **하드웨어 측정 결과**, IMU2는 IMU1 대비 X축과 Z축이 부호 반전, Y축은 동일. `IMU2_SIGN_X = -1, IMU2_SIGN_Y = +1, IMU2_SIGN_Z = -1` 상수를 도입해 IMU2 raw 읽기 직후 적용하여 모든 downstream 로직(bias 측정, fusion, 적응 필터)이 IMU1/drone frame에서 동작하도록 함.

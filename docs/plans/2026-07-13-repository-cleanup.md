@@ -1,64 +1,64 @@
-# Repository Cleanup Implementation Plan
+# 저장소 정리 구현 계획
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use
-> `superpowers:subagent-driven-development` (recommended) or
-> `superpowers:executing-plans` to implement this plan task-by-task. Steps use
-> checkbox (`- [ ]`) syntax for tracking.
+> **에이전트 작업자용:** 필수 하위 스킬: 이 계획을 작업 단위로 구현하려면
+> `superpowers:subagent-driven-development`(권장) 또는
+> `superpowers:executing-plans`를 사용한다. 단계는 추적을 위해
+> 체크박스(`- [ ]`) 구문을 사용한다.
 
-**Goal:** Make the supported ESP32-S3 + ICM42670 + PWM path obvious, preserve
-all other firmware and tools under a clearly unsupported archive, and ensure
-every maintained document points to an existing path.
+**목표:** 지원되는 ESP32-S3 + ICM42670 + PWM 경로를 명확하게 드러내고, 그 외
+모든 펌웨어와 도구는 명확히 지원되지 않는 보관 영역 아래에 보존하며, 유지되는
+모든 문서가 실제 존재하는 경로를 가리키도록 보장한다.
 
-**Architecture:** Promote the current cascade controller and hardware
-diagnostics into `firmware/flight/` and `firmware/diagnostics/`. Move every
-other sketch and the stale PlatformIO project into `firmware/archive/` without
-repairing them. Rename current Python tools in place, archive legacy network
-tools, rebuild documentation around a migration map, and enforce the result
-with a local repository-layout validator.
+**아키텍처:** 현행 캐스케이드 컨트롤러와 하드웨어 진단을 `firmware/flight/`와
+`firmware/diagnostics/`로 승격한다. 그 외 모든 스케치와 오래된 PlatformIO
+프로젝트는 수리하지 않고 `firmware/archive/`로 옮긴다. 현행 Python 도구를
+제자리에서 이름을 바꾸고, 레거시 네트워크 도구를 보관하며, 마이그레이션 맵을
+중심으로 문서를 재구성하고, 그 결과를 로컬 저장소 레이아웃 검증기로
+강제한다.
 
-**Tech Stack:** Git, Arduino CLI, ESP32-S3 Arduino core, ICM42670P,
-ESP32Servo/LEDC PWM, Python 3 standard library, pandas, matplotlib, pygame.
+**기술 스택:** Git, Arduino CLI, ESP32-S3 Arduino 코어, ICM42670P,
+ESP32Servo/LEDC PWM, Python 3 표준 라이브러리, pandas, matplotlib, pygame.
 
-**Design:**
+**설계:**
 [`docs/design/2026-07-13-repository-cleanup-design.md`](../design/2026-07-13-repository-cleanup-design.md)
 
-## Global Constraints
+## 전역 제약
 
-- Supported stack: ESP32-S3 + ICM42670 + PWM only.
-- `dual_imu_cascade_pwm` is a current flight-controller candidate, not a claim
-  of stable flight or hover.
-- Preserve validated pin assignments, motor mixer signs, body-axis mapping,
-  UDP command grammar, and telemetry field order.
-- Preserve compatibility with 10-, 14-, and 21-field telemetry packets.
-- Do not repair, modernize, compile, or claim support for anything under
-  `firmware/archive/` or `scripts/archive/`.
-- Use `git mv` for tracked moves so history remains recoverable.
-- Arduino sketch directory names must exactly match their `.ino` basenames.
-- Current source and maintained docs use `lower_snake_case` paths.
-- Do not commit `.codex`, `.claude`, `.gemini`, `.vscode`, `AGENTS.md`, Python
-  caches, editor swap files, or generated CSV logs.
-- Do not push intermediate commits. Push only after the completed cleanup has
-  been reviewed and the user explicitly requests it.
+- 지원 스택: ESP32-S3 + ICM42670 + PWM 전용.
+- `dual_imu_cascade_pwm`는 현행 비행 제어 후보이며, 안정적인 비행이나 호버를
+  보장하는 것은 아니다.
+- 검증된 핀 배치, 모터 믹서 부호, 기체축 매핑, UDP 명령 문법, 텔레메트리 필드
+  순서를 보존한다.
+- 10, 14, 21 필드 텔레메트리 패킷과의 호환성을 보존한다.
+- `firmware/archive/` 또는 `scripts/archive/` 아래의 어떤 것도 수리, 현대화,
+  컴파일하거나 지원을 주장하지 않는다.
+- 이력을 복구 가능하게 유지하도록 추적된 이동에는 `git mv`를 사용한다.
+- Arduino 스케치 디렉토리 이름은 해당 `.ino` 기본 이름과 정확히 일치해야 한다.
+- 현행 소스와 유지되는 문서는 `lower_snake_case` 경로를 사용한다.
+- `.codex`, `.claude`, `.gemini`, `.vscode`, `AGENTS.md`, Python 캐시, 에디터
+  스왑 파일, 생성된 CSV 로그를 커밋하지 않는다.
+- 중간 커밋을 푸시하지 않는다. 완료된 정리가 검토되고 사용자가 명시적으로
+  요청한 후에만 푸시한다.
 
 ---
 
-### Task 1: Exclude local agent, editor, and generated files
+### 작업 1: 로컬 에이전트, 에디터, 생성된 파일 제외
 
-**Files:**
+**파일:**
 
-- Modify: `.gitignore`
-- Delete from Git: `.gemini/settings.json`
-- Delete from Git: `.vscode/extensions.json`
-- Delete from Git: `.vscode/settings.json`
+- 수정: `.gitignore`
+- Git에서 삭제: `.gemini/settings.json`
+- Git에서 삭제: `.vscode/extensions.json`
+- Git에서 삭제: `.vscode/settings.json`
 
-**Interfaces:**
+**인터페이스:**
 
-- Consumes: the current repository root.
-- Produces: Git ignores local agent/editor state while retaining project files.
+- 입력: 현행 저장소 루트.
+- 출력: Git이 프로젝트 파일은 유지하면서 로컬 에이전트/에디터 상태를 무시한다.
 
-- [ ] **Step 1: Run the ignore assertion before changing `.gitignore`**
+- [ ] **단계 1: `.gitignore` 변경 전 무시 어서션 실행**
 
-Run:
+실행:
 
 ```bash
 for candidate in \
@@ -78,12 +78,12 @@ for candidate in \
 done
 ```
 
-Expected: FAIL on at least `.codex/probe`; this proves the current ignore file
-does not meet the cleanup requirement.
+예상: 최소한 `.codex/probe`에서 FAIL; 이는 현행 무시 파일이 정리 요구사항을
+충족하지 못함을 증명한다.
 
-- [ ] **Step 2: Extend `.gitignore` with exact local/generated patterns**
+- [ ] **단계 2: 정확한 로컬/생성 패턴으로 `.gitignore` 확장**
 
-Append this block using `apply_patch`:
+`apply_patch`를 사용해 다음 블록을 추가한다:
 
 ```gitignore
 
@@ -103,68 +103,68 @@ __pycache__/
 *.py[cod]
 ```
 
-Keep the existing `.pio` and `*.csv` rules.
+기존 `.pio` 및 `*.csv` 규칙은 유지한다.
 
-- [ ] **Step 3: Remove tracked local configuration**
+- [ ] **단계 3: 추적된 로컬 설정 제거**
 
 ```bash
 git rm -r .gemini .vscode
 ```
 
-Expected: `.gemini/settings.json`, `.vscode/extensions.json`, and
-`.vscode/settings.json` are staged for deletion.
+예상: `.gemini/settings.json`, `.vscode/extensions.json`,
+`.vscode/settings.json`가 삭제 대상으로 스테이징된다.
 
-- [ ] **Step 4: Re-run the Step 1 ignore assertion**
+- [ ] **단계 4: 단계 1 무시 어서션 재실행**
 
-Expected: exit 0 with no `NOT_IGNORED` output. Then run:
+예상: `NOT_IGNORED` 출력 없이 exit 0. 그런 다음 실행:
 
 ```bash
 git status --short --ignored | rg '!! (\.codex/|AGENTS\.md|firmware/examples/\.codex/|firmware/examples/AGENTS\.md)'
 ```
 
-Expected: if those local paths exist in the checkout, they appear only with
-`!!`, never `??`. No output is also valid in an isolated worktree where the
-local-only paths are absent; the hypothetical-path assertion above remains the
-authoritative check.
+예상: 해당 로컬 경로가 체크아웃에 존재한다면 오직 `!!`로만 나타나며, 절대
+`??`로는 나타나지 않는다. 로컬 전용 경로가 없는 격리된 워크트리에서는 출력이
+없는 것도 유효하다; 위의 가상 경로 어서션이 여전히 권위 있는 검사로
+남는다.
 
-- [ ] **Step 5: Commit the local-state cleanup**
+- [ ] **단계 5: 로컬 상태 정리 커밋**
 
 ```bash
 git add .gitignore
 git commit -m "chore: ignore local agent and editor files"
 ```
 
-### Task 2: Separate current firmware from the archive
+### 작업 2: 현행 펌웨어를 보관 영역과 분리
 
-**Files:**
+**파일:**
 
-- Move: all 23 directories currently under `firmware/examples/`
-- Move: `firmware/src/`, `firmware/lib/`, `firmware/include/`
-- Move: `firmware/platformio_config/platformio.ini`
-- Move: `test/README`
-- Modify: `firmware/README.md`
-- Create: `firmware/archive/README.md`
-- Create: `firmware/archive/dshot/README.md`
-- Create: `firmware/archive/platformio_skeleton/README.md`
+- 이동: 현재 `firmware/examples/` 아래의 23개 디렉토리 전부
+- 이동: `firmware/src/`, `firmware/lib/`, `firmware/include/`
+- 이동: `firmware/platformio_config/platformio.ini`
+- 이동: `test/README`
+- 수정: `firmware/README.md`
+- 생성: `firmware/archive/README.md`
+- 생성: `firmware/archive/dshot/README.md`
+- 생성: `firmware/archive/platformio_skeleton/README.md`
 
-**Interfaces:**
+**인터페이스:**
 
-- Produces current flight sketch:
+- 현행 비행 스케치 출력:
   `firmware/flight/dual_imu_cascade_pwm/dual_imu_cascade_pwm.ino`.
-- Produces five diagnostic sketch roots under `firmware/diagnostics/`.
-- Produces unsupported historical material only under `firmware/archive/`.
-- Later tasks rely on these exact destinations for source comments and docs.
+- `firmware/diagnostics/` 아래에 다섯 개의 진단 스케치 루트를 출력한다.
+- 지원되지 않는 역사적 자료는 오직 `firmware/archive/` 아래에만 출력한다.
+- 이후 작업은 소스 주석과 문서를 위해 이 정확한 대상 경로에 의존한다.
 
-- [ ] **Step 1: Record the pre-migration firmware inventory**
+- [ ] **단계 1: 마이그레이션 전 펌웨어 목록 기록**
 
 ```bash
 git ls-files 'firmware/examples/**/*.ino' | sort > /tmp/zetin-firmware-before.txt
 test "$(wc -l < /tmp/zetin-firmware-before.txt)" -eq 23
 ```
 
-Expected: exit 0 and 23 sketch paths.
+예상: exit 0과 23개의 스케치 경로.
 
-- [ ] **Step 2: Create lifecycle/category parents**
+- [ ] **단계 2: 수명주기/범주 상위 디렉토리 생성**
 
 ```bash
 mkdir -p \
@@ -179,7 +179,7 @@ mkdir -p \
   firmware/archive/platformio_skeleton/test
 ```
 
-- [ ] **Step 3: Move and rename the six current sketches**
+- [ ] **단계 3: 현행 스케치 6개 이동 및 이름 변경**
 
 ```bash
 git mv firmware/examples/DUAL_IMU_CASCADE firmware/flight/dual_imu_cascade_pwm
@@ -207,7 +207,7 @@ git mv firmware/diagnostics/board_v1_5_2_dual_imu/PCB_1.5.2_TEST.ino \
   firmware/diagnostics/board_v1_5_2_dual_imu/board_v1_5_2_dual_imu.ino
 ```
 
-- [ ] **Step 4: Archive the superseded flight/filter sketches**
+- [ ] **단계 4: 대체된 비행/필터 스케치 보관**
 
 ```bash
 git mv firmware/examples/PWM_TEST_IMU_PID \
@@ -236,7 +236,7 @@ git mv firmware/archive/filter_experiments/icm42670_kalman_attitude/KALMAN_TEST.
   firmware/archive/filter_experiments/icm42670_kalman_attitude/icm42670_kalman_attitude.ino
 ```
 
-- [ ] **Step 5: Archive DShot and motor-allocation sketches**
+- [ ] **단계 5: DShot 및 모터 할당 스케치 보관**
 
 ```bash
 git mv firmware/examples/DSHOT_TEST \
@@ -275,7 +275,7 @@ git mv firmware/archive/platformio_skeleton/examples/motor_allocator_dshot/MOTOR
   firmware/archive/platformio_skeleton/examples/motor_allocator_dshot/motor_allocator_dshot.ino
 ```
 
-- [ ] **Step 6: Archive sensor and alternate-MCU sketches**
+- [ ] **단계 6: 센서 및 대체 MCU 스케치 보관**
 
 ```bash
 git mv firmware/examples/BMM_TEST \
@@ -304,11 +304,11 @@ git mv firmware/archive/other_mcus/stm32_f411_uart_rx/F411_test.ino \
   firmware/archive/other_mcus/stm32_f411_uart_rx/stm32_f411_uart_rx.ino
 ```
 
-Do not remove the local `firmware/examples/` directory if it still contains
-ignored `.codex/` or `AGENTS.md` files. Git will record no tracked
-`firmware/examples/` content after the moves.
+로컬 `firmware/examples/` 디렉토리가 여전히 무시된 `.codex/` 또는 `AGENTS.md`
+파일을 포함하고 있다면 제거하지 않는다. 이동 후 Git은 추적된
+`firmware/examples/` 콘텐츠를 기록하지 않는다.
 
-- [ ] **Step 7: Move the stale PlatformIO skeleton as one historical unit**
+- [ ] **단계 7: 오래된 PlatformIO 스켈레톤을 하나의 역사적 단위로 이동**
 
 ```bash
 git mv firmware/src firmware/archive/platformio_skeleton/src
@@ -320,11 +320,11 @@ rmdir firmware/platformio_config
 git mv test/README firmware/archive/platformio_skeleton/test/README
 ```
 
-Do not edit its source, includes, or dependency list.
+그 소스, 인클루드, 의존성 목록을 편집하지 않는다.
 
-- [ ] **Step 8: Write archive warnings and replace `firmware/README.md`**
+- [ ] **단계 8: 보관 경고 작성 및 `firmware/README.md` 교체**
 
-Create `firmware/archive/README.md`:
+`firmware/archive/README.md` 생성:
 
 ```markdown
 # Archived firmware
@@ -337,7 +337,7 @@ Do not flash archived motor-control code without reviewing it completely and
 removing propellers. Current firmware is linked from [`../README.md`](../README.md).
 ```
 
-Create `firmware/archive/dshot/README.md`:
+`firmware/archive/dshot/README.md` 생성:
 
 ```markdown
 # Archived DShot experiments
@@ -347,7 +347,7 @@ maintained. `four_motor_full_throttle_unsafe` commands all four motors near
 full output and must never be treated as a normal bench test.
 ```
 
-Create `firmware/archive/platformio_skeleton/README.md`:
+`firmware/archive/platformio_skeleton/README.md` 생성:
 
 ```markdown
 # Archived PlatformIO skeleton
@@ -358,13 +358,13 @@ Supported firmware is built with Arduino CLI from `firmware/flight/` and
 `firmware/diagnostics/`.
 ```
 
-Replace `firmware/README.md` with a current-only guide containing links to the
-one flight and five diagnostic directories, the `/tmp` Arduino CLI build
-pattern, the archive warning, and the existing propeller/polarity safety rules.
-List the actual SPI/CS pinout for each diagnostic, especially the single-IMU
-raw sketch whose pins differ from the PCB v1.5.2 diagnostic.
+`firmware/README.md`를 현행 전용 가이드로 교체한다. 하나의 비행 및 다섯 개의
+진단 디렉토리로의 링크, `/tmp` Arduino CLI 빌드 패턴, 보관 경고, 기존
+프로펠러/극성 안전 규칙을 포함한다. 각 진단에 대한 실제 SPI/CS 핀 배치를
+나열하며, 특히 핀이 PCB v1.5.2 진단과 다른 단일 IMU raw 스케치를
+명시한다.
 
-- [ ] **Step 9: Verify structure and compile only current firmware**
+- [ ] **단계 9: 구조 검증 및 현행 펌웨어만 컴파일**
 
 ```bash
 test "$(find firmware -type f -name '*.ino' | wc -l)" -eq 23
@@ -391,11 +391,11 @@ for sketch in \
 done
 ```
 
-Expected: 23 name checks and six current ESP32-S3 builds pass. Third-party
-library warnings may remain; source compile errors may not. Do not compile
-anything under `firmware/archive/`.
+예상: 23개의 이름 검사와 여섯 개의 현행 ESP32-S3 빌드가 통과한다. 서드파티
+라이브러리 경고는 남아 있을 수 있으나, 소스 컴파일 오류는 남으면 안 된다.
+`firmware/archive/` 아래의 어떤 것도 컴파일하지 않는다.
 
-- [ ] **Step 10: Commit the firmware lifecycle split**
+- [ ] **단계 10: 펌웨어 수명주기 분리 커밋**
 
 ```bash
 git add firmware
@@ -404,38 +404,38 @@ git commit -m "refactor: separate current and archived firmware"
 
 ---
 
-### Task 3: Rename current Python tools and archive legacy network scripts
+### 작업 3: 현행 Python 도구 이름 변경 및 레거시 네트워크 스크립트 보관
 
-**Files:**
+**파일:**
 
-- Rename: eight current files under `scripts/`
-- Move: `scripts/GPS_Reciever.py`
-- Move: `test/tcp_test.py`
-- Remove after folding content: `test/README.md`
-- Create: `scripts/archive/README.md`
-- Modify imports in: `scripts/receive_telemetry.py`,
+- 이름 변경: `scripts/` 아래의 현행 파일 8개
+- 이동: `scripts/GPS_Reciever.py`
+- 이동: `test/tcp_test.py`
+- 콘텐츠를 합친 후 제거: `test/README.md`
+- 생성: `scripts/archive/README.md`
+- 임포트 수정 대상: `scripts/receive_telemetry.py`,
   `scripts/monitor_telemetry.py`
-- Modify paired-path docstring in: `scripts/receive_dual_imu_debug.py`
-- Modify current flight firmware comments naming ground tools
-- Replace: `scripts/README.md`
+- 짝 경로 독스트링 수정 대상: `scripts/receive_dual_imu_debug.py`
+- 지상 도구를 명명하는 현행 비행 펌웨어 주석 수정
+- 교체: `scripts/README.md`
 
-**Interfaces:**
+**인터페이스:**
 
-- Produces module `telemetry_schema` exporting `TELEMETRY_FIELDS`,
-  `CSV_FIELDS`, `parse_telemetry_packet`, `sample_to_csv_row`, and
-  `active_fault_names` unchanged.
-- Produces the executable paths consumed by all maintained docs.
+- `TELEMETRY_FIELDS`, `CSV_FIELDS`, `parse_telemetry_packet`,
+  `sample_to_csv_row`, `active_fault_names`를 변경 없이 내보내는
+  `telemetry_schema` 모듈을 출력한다.
+- 유지되는 모든 문서가 사용하는 실행 파일 경로를 출력한다.
 
-- [ ] **Step 1: Prove the new names do not exist yet**
+- [ ] **단계 1: 새 이름이 아직 존재하지 않음을 증명**
 
 ```bash
 test ! -e scripts/control_dualsense.py
 test ! -e scripts/telemetry_schema.py
 ```
 
-Expected: exit 0.
+예상: exit 0.
 
-- [ ] **Step 2: Rename current scripts and archive legacy scripts**
+- [ ] **단계 2: 현행 스크립트 이름 변경 및 레거시 스크립트 보관**
 
 ```bash
 git mv scripts/Drone_Control_Dualsense.py scripts/control_dualsense.py
@@ -452,42 +452,42 @@ git mv scripts/GPS_Reciever.py scripts/archive/receive_gps_udp_legacy.py
 git mv test/tcp_test.py scripts/archive/test_tcp_legacy.py
 ```
 
-- [ ] **Step 3: Update imports and paired paths using `apply_patch`**
+- [ ] **단계 3: `apply_patch`를 사용해 임포트와 짝 경로 갱신**
 
-In both `scripts/receive_telemetry.py` and
-`scripts/monitor_telemetry.py`, replace:
+`scripts/receive_telemetry.py`와
+`scripts/monitor_telemetry.py` 양쪽에서 다음을 교체한다:
 
 ```python
 from drone_telemetry import (
 ```
 
-with:
+다음으로:
 
 ```python
 from telemetry_schema import (
 ```
 
-In `scripts/receive_dual_imu_debug.py`, replace the paired firmware line with:
+`scripts/receive_dual_imu_debug.py`에서 짝 펌웨어 줄을 다음으로 교체한다:
 
 ```python
 Pairs with
 firmware/diagnostics/icm42670_dual_loop_debug/icm42670_dual_loop_debug.ino.
 ```
 
-In `firmware/flight/dual_imu_cascade_pwm/dual_imu_cascade_pwm.ino`, replace the
-two ground-tool comments with:
+`firmware/flight/dual_imu_cascade_pwm/dual_imu_cascade_pwm.ino`에서 두 개의
+지상 도구 주석을 다음으로 교체한다:
 
 ```cpp
 // scripts/control_dualsense.py 프로토콜 호환용
 // scripts/tune_pid.py 명령 호환: P/I/D는 inner rate PID에 대응
 ```
 
-Do not change socket constants, packet formatting, field order, gains, pinout,
-motor mixer, or controller behavior.
+소켓 상수, 패킷 포맷, 필드 순서, 게인, 핀 배치, 모터 믹서, 컨트롤러 동작을
+변경하지 않는다.
 
-- [ ] **Step 4: Create the script archive warning and remove `test/`**
+- [ ] **단계 4: 스크립트 보관 경고 생성 및 `test/` 제거**
 
-Create `scripts/archive/README.md`:
+`scripts/archive/README.md` 생성:
 
 ```markdown
 # Archived PC tools
@@ -497,17 +497,17 @@ history. They are not part of the current UDP telemetry/control workflow and
 are not included in current Python verification.
 ```
 
-Fold any unique factual TCP description from `test/README.md` into the archive
-README, then run:
+`test/README.md`의 고유한 사실 기반 TCP 설명을 보관 README에 합친 다음,
+실행한다:
 
 ```bash
 git rm test/README.md
 rmdir test
 ```
 
-- [ ] **Step 5: Replace `scripts/README.md` with exact current commands**
+- [ ] **단계 5: `scripts/README.md`를 정확한 현행 명령으로 교체**
 
-List these commands from repository root:
+저장소 루트에서 다음 명령을 나열한다:
 
 ```bash
 python scripts/control_dualsense.py
@@ -519,11 +519,11 @@ python scripts/receive_dual_imu_debug.py
 python scripts/test_dualsense_input.py
 ```
 
-State that the receiver and monitor both write to `logs/`, use UDP 4210, and
-share `telemetry_schema.py`. Link legacy scripts only through
-`archive/README.md`.
+리시버와 모니터가 모두 `logs/`에 기록하고, UDP 4210을 사용하며,
+`telemetry_schema.py`를 공유한다고 명시한다. 레거시 스크립트는 오직
+`archive/README.md`를 통해서만 링크한다.
 
-- [ ] **Step 6: Verify imports and syntax**
+- [ ] **단계 6: 임포트 및 구문 검증**
 
 ```bash
 /home/light/anaconda3/bin/python -m py_compile scripts/*.py
@@ -531,10 +531,10 @@ PYTHONPATH=scripts /home/light/anaconda3/bin/python -c \
   'from telemetry_schema import CSV_FIELDS, parse_telemetry_packet; assert len(CSV_FIELDS) == 22; assert parse_telemetry_packet(",".join(["0"] * 10))["Throttle"] == 0'
 ```
 
-Expected: both commands exit 0. Do not include `scripts/archive/*.py` in the
-current support check.
+예상: 두 명령 모두 exit 0. `scripts/archive/*.py`를 현행 지원 검사에 포함하지
+않는다.
 
-- [ ] **Step 7: Commit the script rename**
+- [ ] **단계 7: 스크립트 이름 변경 커밋**
 
 ```bash
 git add scripts firmware/flight
@@ -543,28 +543,28 @@ git commit -m "refactor: rename drone utility scripts"
 
 ---
 
-### Task 4: Rebuild maintained documentation and migration history
+### 작업 4: 유지되는 문서 및 마이그레이션 이력 재구성
 
-**Files:**
+**파일:**
 
-- Modify: `README.md`
-- Move: `docs/ONBOARDING.md` → `docs/project_overview.md`
-- Replace: `docs/README.md`
-- Create: `docs/firmware_catalog.md`
-- Create: `docs/udp_protocol.md`
-- Create: `docs/migration_map.md`
-- Replace: `logs/README.md`
-- Move two `docs/superpowers/` files to `docs/history/`
-- Archive: `docs/presentation.c`, `docs/commit_message.txt`
-- Modify historical document banners and exact paths
+- 수정: `README.md`
+- 이동: `docs/ONBOARDING.md` → `docs/project_overview.md`
+- 교체: `docs/README.md`
+- 생성: `docs/firmware_catalog.md`
+- 생성: `docs/udp_protocol.md`
+- 생성: `docs/migration_map.md`
+- 교체: `logs/README.md`
+- `docs/superpowers/` 파일 두 개를 `docs/history/`로 이동
+- 보관: `docs/presentation.c`, `docs/commit_message.txt`
+- 역사적 문서 배너와 정확한 경로 수정
 
-**Interfaces:**
+**인터페이스:**
 
-- Produces the maintained navigation surface validated by Task 5.
-- Produces 44 migration rows consumed by
-  `check_repo_layout.py::check_migration_map`.
+- 작업 5가 검증하는 유지되는 내비게이션 표면을 출력한다.
+- `check_repo_layout.py::check_migration_map`가 사용하는 44개의 마이그레이션
+  행을 출력한다.
 
-- [ ] **Step 1: Move documents into maintained, historical, and archive paths**
+- [ ] **단계 1: 문서를 유지/역사/보관 경로로 이동**
 
 ```bash
 mkdir -p docs/history docs/archive
@@ -578,9 +578,9 @@ git mv docs/presentation.c docs/archive/pid_dshot_presentation_snippet.c
 git mv docs/commit_message.txt docs/archive/commit_message_snapshot.txt
 ```
 
-- [ ] **Step 2: Replace the root README with a current-only entry point**
+- [ ] **단계 2: 루트 README를 현행 전용 진입점으로 교체**
 
-Use this exact structure and link set:
+다음의 정확한 구조와 링크 집합을 사용한다:
 
 ```markdown
 # ZETIN Drone
@@ -616,7 +616,7 @@ motor order, and correction direction before any restrained flight test.
 Archived experiments are unsupported and may be unsafe.
 ```
 
-- [ ] **Step 3: Rewrite `docs/README.md` as the document index**
+- [ ] **단계 3: `docs/README.md`를 문서 색인으로 재작성**
 
 ```markdown
 # Documentation
@@ -638,27 +638,27 @@ Archived experiments are unsupported and may be unsafe.
 - [Old commit-message snapshot](archive/commit_message_snapshot.txt)
 ```
 
-- [ ] **Step 4: Update `docs/project_overview.md` facts and links**
+- [ ] **단계 4: `docs/project_overview.md`의 사실과 링크 갱신**
 
-Apply all changes in one `apply_patch` review:
+모든 변경을 하나의 `apply_patch` 검토로 적용한다:
 
-1. Replace the old `firmware/examples/` map with `flight/`, `diagnostics/`,
-   and `archive/`.
-2. Point the representative controller to
-   `firmware/flight/dual_imu_cascade_pwm/dual_imu_cascade_pwm.ino`.
-3. Replace every Python tool name with the Task 3 name.
-4. Describe 21 UDP fields and 22 CSV columns including Timestamp; preserve the
-   explicit 10/14-field compatibility note.
-5. Replace the old `src/` warning with a link to
-   `firmware/archive/platformio_skeleton/README.md`.
-6. Place BMM350, GPS, US100, DShot, Kalman, STM32, TCP, and old PID variants in
-   an explicit deprecated/archive section.
-7. Keep the maturity boundary: PWM and raw IMU are bench-verified; stable
-   closed-loop flight is not established.
-8. Keep current pin, mixer, and body-axis facts unchanged.
-9. Convert every navigational code-span path into a relative Markdown link.
+1. 오래된 `firmware/examples/` 맵을 `flight/`, `diagnostics/`, `archive/`로
+   교체한다.
+2. 대표 컨트롤러를
+   `firmware/flight/dual_imu_cascade_pwm/dual_imu_cascade_pwm.ino`로 가리킨다.
+3. 모든 Python 도구 이름을 작업 3의 이름으로 교체한다.
+4. Timestamp를 포함해 21개 UDP 필드와 22개 CSV 열을 설명한다; 명시적인
+   10/14 필드 호환성 참고를 보존한다.
+5. 오래된 `src/` 경고를 `firmware/archive/platformio_skeleton/README.md`로의
+   링크로 교체한다.
+6. BMM350, GPS, US100, DShot, Kalman, STM32, TCP, 오래된 PID 변형을 명시적인
+   폐기/보관 섹션에 배치한다.
+7. 성숙도 경계를 유지한다: PWM과 raw IMU는 벤치 검증되었으나, 안정적인
+   폐루프 비행은 확립되지 않았다.
+8. 현행 핀, 믹서, 기체축 사실을 변경 없이 유지한다.
+9. 모든 내비게이션 코드 스팬 경로를 상대 Markdown 링크로 변환한다.
 
-Use this current tool table exactly:
+다음의 현행 도구 표를 정확히 사용한다:
 
 ```markdown
 | Tool | Role |
@@ -671,9 +671,9 @@ Use this current tool table exactly:
 | [`receive_dual_imu_debug.py`](../scripts/receive_dual_imu_debug.py) | Paired loop diagnostic receiver |
 ```
 
-- [ ] **Step 5: Create the authoritative UDP protocol document**
+- [ ] **단계 5: 권위 있는 UDP 프로토콜 문서 생성**
 
-`docs/udp_protocol.md` must define:
+`docs/udp_protocol.md`는 다음을 정의해야 한다:
 
 ```text
 Transport: UDP
@@ -683,7 +683,7 @@ Registration: any incoming packet identifies the ground-station endpoint;
               current receivers send "connect" periodically.
 ```
 
-Document these commands exactly:
+다음 명령을 정확히 문서화한다:
 
 ```text
 start
@@ -697,7 +697,7 @@ pp|ip|dp <value>
 py|iy|dy <value>
 ```
 
-Document the 21 telemetry fields in this exact order:
+다음의 정확한 순서로 21개 텔레메트리 필드를 문서화한다:
 
 ```text
 Roll, Pitch, Yaw,
@@ -710,43 +710,43 @@ Fault_IMU1, Fault_IMU2, Fault_Disagree,
 Active_IMUs, Mixer_Scaled, Fault_Attitude, Calibration_OK
 ```
 
-State that 10-field packets end at `Throttle`, 14-field packets end at
-`RC_Dropped_Pkts`, unknown legacy values become blank CSV cells, and Timestamp
-is added only by ground tools.
+10 필드 패킷은 `Throttle`에서 끝나고, 14 필드 패킷은 `RC_Dropped_Pkts`에서
+끝나며, 알 수 없는 레거시 값은 빈 CSV 셀이 되고, Timestamp는 지상 도구에서만
+추가된다고 명시한다.
 
-- [ ] **Step 6: Create the firmware catalog and complete migration map**
+- [ ] **단계 6: 펌웨어 카탈로그 및 완전한 마이그레이션 맵 생성**
 
-`docs/firmware_catalog.md` must contain exactly 23 rows with these columns:
+`docs/firmware_catalog.md`는 다음 열을 가진 정확히 23개의 행을 포함해야 한다:
 
 ```text
 Lifecycle | Target MCU | Sensor | Motor protocol | Safety/build note | Link
 ```
 
-Use the six current destinations from Task 2 Step 3 as `current` and the 17
-destinations from Task 2 Steps 4-6 as `archived`. Mark
-`four_motor_full_throttle_unsafe` explicitly unsafe. State that archived
-sketches are not repaired or build-verified.
+작업 2 단계 3의 여섯 개 현행 대상을 `current`로, 작업 2 단계 4-6의 17개
+대상을 `archived`로 사용한다. `four_motor_full_throttle_unsafe`를 명시적으로
+안전하지 않음으로 표시한다. 보관된 스케치는 수리되거나 빌드 검증되지 않았다고
+명시한다.
 
-`docs/migration_map.md` must use `Old path` and `New path` as its first two
-table columns and include exactly:
+`docs/migration_map.md`는 첫 두 개의 테이블 열로 `Old path`와 `New path`를
+사용해야 하며 정확히 다음을 포함해야 한다:
 
-- 23 sketch moves from Task 2 Steps 3-6;
-- five PlatformIO/template moves from Task 2 Step 7;
-- 10 Python/test moves from Task 3 Step 2;
-- five document moves from Task 4 Step 1 plus the folded
-  `test/README.md` → `scripts/archive/README.md` relationship;
+- 작업 2 단계 3-6의 23개 스케치 이동;
+- 작업 2 단계 7의 다섯 개 PlatformIO/템플릿 이동;
+- 작업 3 단계 2의 10개 Python/test 이동;
+- 작업 4 단계 1의 다섯 개 문서 이동에 더해 합쳐진
+  `test/README.md` → `scripts/archive/README.md` 관계;
 
-Expected total: 44 unique old and 44 unique new paths. List the removed
-`.gemini`/`.vscode` files separately without `Old path`/`New path` table syntax.
+예상 합계: 고유한 옛 경로 44개와 고유한 새 경로 44개. 제거된 `.gemini`/`.vscode`
+파일은 `Old path`/`New path` 테이블 구문 없이 별도로 나열한다.
 
-- [ ] **Step 7: Correct logs and historical docs**
+- [ ] **단계 7: 로그와 역사적 문서 수정**
 
-Replace `logs/README.md` with the actual
-`flight_log_YYYY-MM-DD_HHMMSS.csv` convention, links to the two writers and
-analyzer, Timestamp plus the exact 21 Step 5 fields, and the 10/14-field legacy
-behavior. Remove claims of battery, motor-output, and PID-output columns.
+`logs/README.md`를 실제 `flight_log_YYYY-MM-DD_HHMMSS.csv` 규칙, 두 개의
+기록기와 분석기로의 링크, Timestamp에 더해 단계 5의 정확한 21개 필드, 그리고
+10/14 필드 레거시 동작으로 교체한다. 배터리, 모터 출력, PID 출력 열에 대한
+주장을 제거한다.
 
-At the top of both `docs/history/` files, insert:
+`docs/history/` 파일 두 개의 최상단에 다음을 삽입한다:
 
 ```markdown
 > Historical document: this describes the superseded dual-IMU PID iteration.
@@ -756,7 +756,7 @@ At the top of both `docs/history/` files, insert:
 > [`dual_imu_pid_pwm`](../../firmware/archive/legacy_flight/dual_imu_pid_pwm/).
 ```
 
-Replace all occurrences inside those historical files:
+해당 역사적 파일 안의 모든 발생을 교체한다:
 
 ```text
 firmware/examples/PWM_TEST_DUAL_IMU_PID/PWM_TEST_DUAL_IMU_PID.ino
@@ -769,9 +769,9 @@ Drone_Tuning.py → scripts/tune_pid.py
 Drone_Control_Dualsense.py → scripts/control_dualsense.py
 ```
 
-Label historical compile commands unsupported and do not run them.
+역사적 컴파일 명령을 지원되지 않음으로 표시하고 실행하지 않는다.
 
-- [ ] **Step 8: Run a pre-validator stale-reference audit**
+- [ ] **단계 8: 검증기 실행 전 오래된 참조 감사 수행**
 
 ```bash
 rg -n \
@@ -782,10 +782,10 @@ rg -n \
   --glob '!scripts/archive/**'
 ```
 
-Expected: no output. Old names remain only in `docs/migration_map.md`,
-`docs/design/`, `docs/plans/`, `docs/history/`, and archived source.
+예상: 출력 없음. 옛 이름은 오직 `docs/migration_map.md`, `docs/design/`,
+`docs/plans/`, `docs/history/`, 보관된 소스에만 남는다.
 
-- [ ] **Step 9: Commit the documentation migration**
+- [ ] **단계 9: 문서 마이그레이션 커밋**
 
 ```bash
 git add README.md docs firmware/README.md scripts/README.md logs/README.md
@@ -794,15 +794,15 @@ git commit -m "docs: align project documentation with repository layout"
 
 ---
 
-### Task 5: Add deterministic repository-layout and telemetry checks
+### 작업 5: 결정론적 저장소 레이아웃 및 텔레메트리 검사 추가
 
-**Files:**
+**파일:**
 
-- Create: `tools/test_repo_layout.py`
-- Create: `tools/check_repo_layout.py`
-- Create: `tools/test_telemetry_schema.py`
+- 생성: `tools/test_repo_layout.py`
+- 생성: `tools/check_repo_layout.py`
+- 생성: `tools/test_telemetry_schema.py`
 
-**Interfaces:**
+**인터페이스:**
 
 - `check_markdown_links(repo: Path, files: Iterable[Path]) -> list[str]`
 - `check_sketch_names(repo: Path) -> list[str]`
@@ -810,9 +810,9 @@ git commit -m "docs: align project documentation with repository layout"
 - `check_stale_tokens(repo: Path, files: Iterable[Path]) -> list[str]`
 - `main() -> int`
 
-- [ ] **Step 1: Write failing tests for the repository checker**
+- [ ] **단계 1: 저장소 검증기용 실패 테스트 작성**
 
-Create `tools/test_repo_layout.py`:
+`tools/test_repo_layout.py` 생성:
 
 ```python
 import tempfile
@@ -882,16 +882,16 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run tests and confirm the expected red state**
+- [ ] **단계 2: 테스트 실행 및 예상된 red 상태 확인**
 
 ```bash
 /home/light/anaconda3/bin/python -m unittest tools/test_repo_layout.py -v
 ```
 
-Expected: FAIL with `ModuleNotFoundError: No module named
-'tools.check_repo_layout'`.
+예상: `ModuleNotFoundError: No module named
+'tools.check_repo_layout'`로 FAIL.
 
-- [ ] **Step 3: Implement `tools/check_repo_layout.py`**
+- [ ] **단계 3: `tools/check_repo_layout.py` 구현**
 
 ```python
 #!/usr/bin/env python3
@@ -1062,17 +1062,17 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-- [ ] **Step 4: Run checker tests until green**
+- [ ] **단계 4: 검증기 테스트를 green이 될 때까지 실행**
 
 ```bash
 /home/light/anaconda3/bin/python -m unittest tools/test_repo_layout.py -v
 ```
 
-Expected: four tests pass.
+예상: 네 개의 테스트 통과.
 
-- [ ] **Step 5: Add telemetry compatibility characterization tests**
+- [ ] **단계 5: 텔레메트리 호환성 특성화 테스트 추가**
 
-Create `tools/test_telemetry_schema.py`:
+`tools/test_telemetry_schema.py` 생성:
 
 ```python
 import sys
@@ -1124,7 +1124,7 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 6: Run all repository and telemetry tests**
+- [ ] **단계 6: 모든 저장소 및 텔레메트리 테스트 실행**
 
 ```bash
 /home/light/anaconda3/bin/python -m unittest \
@@ -1133,10 +1133,10 @@ if __name__ == "__main__":
 /home/light/anaconda3/bin/python tools/check_repo_layout.py
 ```
 
-Expected: eight unit tests pass and the checker prints
-`repository layout checks passed`.
+예상: 여덟 개의 단위 테스트가 통과하고 검증기가
+`repository layout checks passed`를 출력한다.
 
-- [ ] **Step 7: Commit the validation tooling**
+- [ ] **단계 7: 검증 도구 커밋**
 
 ```bash
 git add tools
@@ -1145,14 +1145,14 @@ git commit -m "test: validate repository layout and telemetry compatibility"
 
 ---
 
-### Task 6: Run final cleanup verification and prepare review
+### 작업 6: 최종 정리 검증 실행 및 검토 준비
 
-**Files:** No new files unless a verification failure reveals a defect in a
-file already owned by Tasks 1-5.
+**파일:** 검증 실패가 작업 1-5가 이미 소유한 파일의 결함을 드러내지 않는 한
+새 파일은 없다.
 
-**Interfaces:** Produces a clean, locally verified branch. Does not push.
+**인터페이스:** 깨끗하고 로컬에서 검증된 브랜치를 출력한다. 푸시하지 않는다.
 
-- [ ] **Step 1: Run complete Python and repository checks fresh**
+- [ ] **단계 1: 완전한 Python 및 저장소 검사를 새로 실행**
 
 ```bash
 /home/light/anaconda3/bin/python -m unittest \
@@ -1162,10 +1162,10 @@ file already owned by Tasks 1-5.
 /home/light/anaconda3/bin/python -m py_compile scripts/*.py tools/*.py
 ```
 
-Expected: eight tests pass, the repository checker passes, and py_compile
-exits 0.
+예상: 여덟 개의 테스트가 통과하고, 저장소 검증기가 통과하며, py_compile이
+exit 0.
 
-- [ ] **Step 2: Compile all six supported firmware sketches fresh**
+- [ ] **단계 2: 지원되는 여섯 개 펌웨어 스케치 전부 새로 컴파일**
 
 ```bash
 for sketch in \
@@ -1183,9 +1183,9 @@ for sketch in \
 done
 ```
 
-Expected: six exit-0 builds. Do not substitute archive builds.
+예상: exit 0 빌드 여섯 개. 보관 빌드로 대체하지 않는다.
 
-- [ ] **Step 3: Verify migration accounting and working-tree quality**
+- [ ] **단계 3: 마이그레이션 집계 및 작업 트리 품질 검증**
 
 ```bash
 test "$(find firmware -type f -name '*.ino' | wc -l)" -eq 23
@@ -1196,16 +1196,16 @@ git status --short --branch
 git log --oneline --decorate origin/main..HEAD
 ```
 
-Expected:
+예상:
 
-- 23 total, 6 current, and 17 archived sketches;
-- no whitespace errors;
-- no staged or unstaged project files;
-- local agent/editor paths do not appear because they are ignored;
-- local branch is ahead only by the cleanup documentation and implementation
-  commits.
+- 총 23개, 현행 6개, 보관 17개 스케치;
+- 공백 오류 없음;
+- 스테이징되거나 스테이징되지 않은 프로젝트 파일 없음;
+- 로컬 에이전트/에디터 경로는 무시되므로 나타나지 않음;
+- 로컬 브랜치는 정리 문서 및 구현 커밋만큼만 앞서
+  있음.
 
-- [ ] **Step 4: Review the final diff for forbidden behavior changes**
+- [ ] **단계 4: 최종 diff에서 금지된 동작 변경 검토**
 
 ```bash
 git diff --find-renames --stat origin/main...HEAD
@@ -1216,18 +1216,18 @@ git diff --find-renames origin/main...HEAD -- \
   scripts/telemetry_schema.py
 ```
 
-Expected: current firmware/script diffs contain path/comment/import-only
-changes. There must be no gain, pin, motor mixer, packet order, socket address,
-or command parsing change.
+예상: 현행 펌웨어/스크립트 diff는 경로/주석/임포트 변경만 포함한다. 게인, 핀,
+모터 믹서, 패킷 순서, 소켓 주소, 명령 파싱 변경은
+없어야 한다.
 
-- [ ] **Step 5: Hand off for user review without pushing**
+- [ ] **단계 5: 푸시 없이 사용자 검토로 인계**
 
-Report:
+보고:
 
-- final commit list;
-- 6 current and 17 archived sketch counts;
-- firmware compile results;
-- Python, unit-test, and checker results;
-- exact design and implementation-plan links;
-- confirmation that no archive code was repaired or build-claimed;
-- confirmation that the branch has not been pushed.
+- 최종 커밋 목록;
+- 현행 6개 및 보관 17개 스케치 개수;
+- 펌웨어 컴파일 결과;
+- Python, 단위 테스트, 검증기 결과;
+- 정확한 설계 및 구현 계획 링크;
+- 보관 코드가 수리되거나 빌드 주장되지 않았다는 확인;
+- 브랜치가 푸시되지 않았다는 확인.

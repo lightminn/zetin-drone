@@ -1,62 +1,62 @@
-# PWM_TEST_DUAL_IMU_PID Implementation Plan
+# PWM_TEST_DUAL_IMU_PID 구현 계획
 
-> Historical document: this describes the superseded dual-IMU PID iteration.
-> Current flight-controller candidate:
+> 과거 문서: 대체된 듀얼 IMU PID 반복 작업을 설명한다.
+> 현행 비행 제어 후보:
 > [`dual_imu_cascade_pwm`](../../firmware/flight/dual_imu_cascade_pwm/).
-> Archived result:
+> 보관된 결과물:
 > [`dual_imu_pid_pwm`](../../firmware/archive/legacy_flight/dual_imu_pid_pwm/).
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **에이전트 작업자를 위한 안내:** 필수 서브 스킬: 이 계획을 태스크 단위로 구현하려면 superpowers:subagent-driven-development(권장) 또는 superpowers:executing-plans를 사용한다. 각 단계는 추적을 위해 체크박스(`- [ ]`) 구문을 사용한다.
 
-**Goal:** Build a new dual-IMU flight controller sketch that eliminates the in-flight drift seen in the single-IMU `PWM_TEST_IMU_PID.ino`, by adding startup gyro bias calibration, runtime bias estimation, dual IMU fusion with fault detection, and an adaptive complementary filter — while keeping the existing UDP protocol with `scripts/tune_pid.py` 100% compatible.
+**목표:** 단일 IMU `PWM_TEST_IMU_PID.ino`에서 나타난 비행 중 드리프트를 제거하는 새로운 듀얼 IMU 비행 제어 스케치를 만든다. 시동 시 자이로 바이어스 보정, 런타임 바이어스 추정, 고장 검출을 포함한 듀얼 IMU 융합, 적응형 상보 필터를 추가하면서, `scripts/tune_pid.py`와의 기존 UDP 프로토콜은 100% 호환되도록 유지한다.
 
-**Architecture:** Single Arduino .ino file with FreeRTOS 2-task structure (Core 1: PID 1kHz, Core 0: UDP). Two ICM42670 IMUs on shared SPI (CS=10 and CS=9). Each task built incrementally: scaffold → dual read → bias calibration → fusion + fault detection → adaptive alpha → runtime bias estimation → final integration.
+**아키텍처:** FreeRTOS 2-태스크 구조(Core 1: PID 1kHz, Core 0: UDP)를 갖는 단일 Arduino .ino 파일. 공유 SPI에 연결된 두 개의 ICM42670 IMU(CS=10, CS=9). 각 태스크는 점진적으로 구축된다: 골격 → 듀얼 읽기 → 바이어스 보정 → 융합 + 고장 검출 → 적응형 alpha → 런타임 바이어스 추정 → 최종 통합.
 
-**Tech Stack:** Arduino framework on ESP32-S3, ICM42670P library, FreeRTOS, WiFi/UDP, ledcAttach PWM.
+**기술 스택:** ESP32-S3 상의 Arduino 프레임워크, ICM42670P 라이브러리, FreeRTOS, WiFi/UDP, ledcAttach PWM.
 
-**Spec:** [`2026-05-14-dual-imu-pid-design.md`](2026-05-14-dual-imu-pid-design.md)
+**사양:** [`2026-05-14-dual-imu-pid-design.md`](2026-05-14-dual-imu-pid-design.md)
 
-## Testing Strategy for Firmware
+## 펌웨어 테스트 전략
 
-This is hardware firmware — we cannot run unit tests. Verification at each task is:
+이것은 하드웨어 펌웨어이므로 단위 테스트를 실행할 수 없다. 각 태스크에서의 검증은 다음과 같다:
 
-1. **Compile check** with `arduino-cli compile` — programmatic, automatic
-2. **Hardware verification** by the user — flash, observe serial monitor, manual test described in each task
+1. `arduino-cli compile`를 사용한 **컴파일 확인** — 프로그램 방식, 자동
+2. 사용자에 의한 **하드웨어 검증** — 플래시, 시리얼 모니터 관찰, 각 태스크에 기술된 수동 테스트
 
-Compile-failed = block before commit. Hardware verification is documented in each task; user runs it manually and reports back if issues.
+컴파일 실패 = 커밋 전 중단. 하드웨어 검증은 각 태스크에 문서화되어 있으며, 사용자가 수동으로 실행하고 문제가 있으면 보고한다.
 
-## Historical compile command (unsupported; do not run)
+## 히스토리 컴파일 명령 (지원되지 않음; 실행하지 말 것)
 
 ```bash
 arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/archive/legacy_flight/dual_imu_pid_pwm/
 ```
 
-Historical expected output was `Used library ... Used platform ...` with exit
-code 0. This archived target is no longer build-supported; do not repair or run
-these commands as part of current verification.
+과거의 예상 출력은 종료 코드 0과 함께 `Used library ... Used platform ...`
+였다. 이 보관된 대상은 더 이상 빌드가 지원되지 않으므로, 현재 검증의 일부로
+이 명령들을 수정하거나 실행하지 말 것.
 
 ---
 
-## File Structure
+## 파일 구조
 
-Single sketch file in new folder, matching existing examples/ pattern:
+기존 examples/ 패턴에 맞춰, 새 폴더에 단일 스케치 파일:
 
-- **Create:** `firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino`
+- **생성:** `firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino`
 
-No other files. No headers or library split — keeps cohesion with existing examples and is short enough to hold in context.
+다른 파일은 없다. 헤더나 라이브러리 분리 없음 — 기존 예제와의 응집성을 유지하며, 컨텍스트에 담아두기에 충분히 짧다.
 
 ---
 
-## Task 1: Scaffold with dual IMU init + single read
+## Task 1: 듀얼 IMU 초기화 + 단일 읽기로 골격 구성
 
-**Goal:** Create the new folder and `.ino` file. Copy the baseline structure from `PWM_TEST_IMU_PID.ino` but with two `ICM42670` instances. Reads only IMU1 (averaging logic deferred to Task 3). This task produces a functionally-equivalent build to the original that already verifies IMU2 can be initialized alongside IMU1.
+**목표:** 새 폴더와 `.ino` 파일을 생성한다. `PWM_TEST_IMU_PID.ino`의 기본 구조를 복사하되 두 개의 `ICM42670` 인스턴스를 둔다. IMU1만 읽는다(평균화 로직은 Task 3으로 미룸). 이 태스크는 원본과 기능적으로 동등한 빌드를 만들며, IMU2가 IMU1과 함께 초기화될 수 있음을 이미 검증한다.
 
-**Files:**
-- Create: `firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino`
+**파일:**
+- 생성: `firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino`
 
-- [ ] **Step 1: Create the folder and file with the scaffold**
+- [ ] **Step 1: 골격과 함께 폴더 및 파일 생성**
 
-Write `firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino` with this content:
+`firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino`를 다음 내용으로 작성한다:
 
 ```cpp
 #include <Arduino.h>
@@ -436,20 +436,20 @@ void loop() {
 }
 ```
 
-- [ ] **Step 2: Compile**
+- [ ] **Step 2: 컴파일**
 
-Run:
+실행:
 ```bash
 arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/archive/legacy_flight/dual_imu_pid_pwm/
 ```
 
-Expected: exit 0, no errors. If errors, fix and re-run until clean.
+예상: 종료 코드 0, 오류 없음. 오류가 있으면 수정하고 깨끗해질 때까지 다시 실행한다.
 
-- [ ] **Step 3: Hardware verification (user)**
+- [ ] **Step 3: 하드웨어 검증 (사용자)**
 
-User flashes and confirms serial shows `SYSTEM READY (Task 1 scaffold...)` and no `IMU1 INIT FAILED` / `IMU2 INIT FAILED`. Drone should not arm.
+사용자가 플래시하고 시리얼에 `SYSTEM READY (Task 1 scaffold...)`가 표시되며 `IMU1 INIT FAILED` / `IMU2 INIT FAILED`가 없는지 확인한다. 드론은 시동되면 안 된다.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: 커밋**
 
 ```bash
 git add firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino
@@ -458,16 +458,16 @@ git commit -m "feat: scaffold PWM_TEST_DUAL_IMU_PID with dual IMU init"
 
 ---
 
-## Task 2: Read both IMUs and average raw values (no bias yet)
+## Task 2: 두 IMU를 모두 읽고 원시값 평균화 (아직 바이어스 없음)
 
-**Goal:** Replace the single IMU1 read in `pid_task` with reads from both IMUs and use the simple average. No bias correction or fault detection yet — that comes in Task 3 and Task 4.
+**목표:** `pid_task`의 단일 IMU1 읽기를 두 IMU 모두에서 읽어 단순 평균을 사용하도록 교체한다. 아직 바이어스 보정이나 고장 검출은 없다 — 그것은 Task 3과 Task 4에서 다룬다.
 
-**Files:**
-- Modify: `firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino` (PID task only)
+**파일:**
+- 수정: `firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino` (PID 태스크만)
 
-- [ ] **Step 1: Modify the initial read in `pid_task`**
+- [ ] **Step 1: `pid_task`의 초기 읽기 수정**
 
-Replace the `inv_imu_sensor_event_t e1;` and the first read block (right after the comment "// 6. PID task...") with:
+`inv_imu_sensor_event_t e1;`과 첫 번째 읽기 블록(주석 "// 6. PID task..." 바로 다음)을 다음으로 교체한다:
 
 ```cpp
   inv_imu_sensor_event_t e1, e2;
@@ -482,9 +482,9 @@ Replace the `inv_imu_sensor_event_t e1;` and the first read block (right after t
   lpf_gz =  ((e1.gyro[2]  + e2.gyro[2])  * 0.5f) * GYRO_SCALE;
 ```
 
-- [ ] **Step 2: Modify the in-loop read in `pid_task`**
+- [ ] **Step 2: `pid_task`의 루프 내부 읽기 수정**
 
-Replace the in-loop `IMU1.getDataFromRegisters(e1);` block (six raw_* assignments) with:
+루프 내부의 `IMU1.getDataFromRegisters(e1);` 블록(6개의 raw_* 대입)을 다음으로 교체한다:
 
 ```cpp
     IMU1.getDataFromRegisters(e1);
@@ -497,25 +497,25 @@ Replace the in-loop `IMU1.getDataFromRegisters(e1);` block (six raw_* assignment
     raw_gz =  ((e1.gyro[2]  + e2.gyro[2])  * 0.5f) * GYRO_SCALE;
 ```
 
-- [ ] **Step 3: Update ready message**
+- [ ] **Step 3: 준비 메시지 갱신**
 
-Replace the `Serial.println("SYSTEM READY (Task 1 ...)");` line with:
+`Serial.println("SYSTEM READY (Task 1 ...)");` 줄을 다음으로 교체한다:
 
 ```cpp
   Serial.println("SYSTEM READY (Task 2: dual IMU averaged)");
 ```
 
-- [ ] **Step 4: Compile**
+- [ ] **Step 4: 컴파일**
 
 ```bash
 arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/archive/legacy_flight/dual_imu_pid_pwm/
 ```
 
-- [ ] **Step 5: Hardware verification (user)**
+- [ ] **Step 5: 하드웨어 검증 (사용자)**
 
-Flash, open scripts/tune_pid.py. Observe telemetry: with drone stationary, `angleX`/`angleY` should be near 0 and stable. `raw_gx/y/z` should be similar magnitude as previous single-IMU version (averaging two same-direction IMUs gives the same mean, with less noise).
+플래시한 뒤 scripts/tune_pid.py를 연다. 텔레메트리를 관찰한다: 드론이 정지 상태일 때 `angleX`/`angleY`는 0에 가깝고 안정적이어야 한다. `raw_gx/y/z`는 이전 단일 IMU 버전과 비슷한 크기여야 한다(같은 방향의 두 IMU를 평균하면 평균값은 같고 노이즈는 줄어든다).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: 커밋**
 
 ```bash
 git add firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino
@@ -524,16 +524,16 @@ git commit -m "feat: read both IMUs and average raw values"
 
 ---
 
-## Task 3: Startup gyro bias calibration
+## Task 3: 시동 시 자이로 바이어스 보정
 
-**Goal:** Add `calibrate_bias()` that runs in `setup()` after IMU init. Measures 2000 samples per IMU, checks for movement, stores per-IMU bias arrays (in **drone frame**, with IMU2 sign correction applied), retries up to 3 times.
+**목표:** IMU 초기화 후 `setup()`에서 실행되는 `calibrate_bias()`를 추가한다. IMU당 2000개의 샘플을 측정하고, 움직임을 확인하며, IMU별 바이어스 배열을(**드론 좌표계**로, IMU2 부호 보정을 적용하여) 저장하고, 최대 3회 재시도한다.
 
-> **Note (Task 2 fix):** IMU2 is mounted with x and z axes inverted vs IMU1; `IMU2_SIGN_X/Y/Z` constants were added in section 2 in the Task 2 fix. Task 3 must apply these signs at bias measurement so `gyro_bias2` is in the same (IMU1/drone) frame as `gyro_bias1`. Otherwise the bias subtraction during averaging would be in the wrong frame.
+> **참고 (Task 2 수정):** IMU2는 IMU1 대비 x축과 z축이 반전되어 장착되어 있다; `IMU2_SIGN_X/Y/Z` 상수는 Task 2 수정에서 섹션 2에 추가되었다. Task 3은 `gyro_bias2`가 `gyro_bias1`과 동일한 (IMU1/드론) 좌표계에 있도록 바이어스 측정 시 이 부호들을 적용해야 한다. 그렇지 않으면 평균화 중의 바이어스 감산이 잘못된 좌표계에서 이루어진다.
 
-**Files:**
-- Modify: `firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino`
+**파일:**
+- 수정: `firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino`
 
-- [ ] **Step 1: Add bias constants in section 2 (after `YAW_DEADZONE` line)**
+- [ ] **Step 1: 섹션 2에 바이어스 상수 추가 (`YAW_DEADZONE` 줄 다음)**
 
 ```cpp
 const int      BIAS_CALIB_SAMPLES         = 2000;
@@ -541,7 +541,7 @@ const float    BIAS_CALIB_MOVEMENT_THRESH = 1.0f;   // deg/s std-dev limit per a
 const int      BIAS_CALIB_RETRIES         = 3;
 ```
 
-- [ ] **Step 2: Add bias state variables in section 3 (after `lpf_gx/y/z` line)**
+- [ ] **Step 2: 섹션 3에 바이어스 상태 변수 추가 (`lpf_gx/y/z` 줄 다음)**
 
 ```cpp
 // Per-IMU gyro bias (deg/s), filled by calibrate_bias()
@@ -549,9 +549,9 @@ float gyro_bias1[3] = {0.0f, 0.0f, 0.0f};
 float gyro_bias2[3] = {0.0f, 0.0f, 0.0f};
 ```
 
-- [ ] **Step 3: Add `calibrate_bias()` function before `pid_task`**
+- [ ] **Step 3: `pid_task` 앞에 `calibrate_bias()` 함수 추가**
 
-Insert before the `// 6. PID task` comment:
+`// 6. PID task` 주석 앞에 삽입한다:
 
 ```cpp
 // ==========================================================
@@ -620,11 +620,11 @@ static void calibrate_bias() {
 }
 ```
 
-After this step, `gyro_bias1` and `gyro_bias2` are both stored in **IMU1/drone frame** (with IMU2's axis sign correction applied during accumulation). Downstream code subtracts bias from sign-corrected gyro values — see Step 5.
+이 단계 이후, `gyro_bias1`과 `gyro_bias2`는 모두 **IMU1/드론 좌표계**로 저장된다(누적 중에 IMU2의 축 부호 보정이 적용됨). 이후 코드는 부호 보정된 자이로 값에서 바이어스를 감산한다 — Step 5 참조.
 
-- [ ] **Step 4: Call `calibrate_bias()` in setup() after IMU startAccel/startGyro and before xTaskCreatePinnedToCore**
+- [ ] **Step 4: setup()에서 IMU startAccel/startGyro 이후, xTaskCreatePinnedToCore 이전에 `calibrate_bias()` 호출**
 
-In `setup()`, find the block:
+`setup()`에서 다음 블록을 찾는다:
 
 ```cpp
   IMU2.startAccel(1600, 16);
@@ -634,7 +634,7 @@ In `setup()`, find the block:
   xTaskCreatePinnedToCore(pid_task, "PID", 4096, NULL, 1, NULL, 1);
 ```
 
-Change to:
+다음으로 변경한다:
 
 ```cpp
   IMU2.startAccel(1600, 16);
@@ -646,9 +646,9 @@ Change to:
   xTaskCreatePinnedToCore(pid_task, "PID", 4096, NULL, 1, NULL, 1);
 ```
 
-- [ ] **Step 5: Apply bias correction in `pid_task` reads**
+- [ ] **Step 5: `pid_task` 읽기에 바이어스 보정 적용**
 
-In `pid_task`, change the in-loop dual read block to apply IMU2 sign correction and subtract per-IMU bias (bias is already in drone frame from Step 3). Replace the entire in-loop read block (the one from Task 2 that uses `IMU2_SIGN_X * e2.gyro[0]` etc) with:
+`pid_task`에서 루프 내부 듀얼 읽기 블록을 IMU2 부호 보정을 적용하고 IMU별 바이어스를 감산하도록 변경한다(바이어스는 Step 3에서 이미 드론 좌표계에 있음). 루프 내부 읽기 블록 전체(Task 2에서 `IMU2_SIGN_X * e2.gyro[0]` 등을 사용하던 것)를 다음으로 교체한다:
 
 ```cpp
     IMU1.getDataFromRegisters(e1);
@@ -672,9 +672,9 @@ In `pid_task`, change the in-loop dual read block to apply IMU2 sign correction 
     raw_gz =  (gz1 + gz2) * 0.5f;
 ```
 
-Reasoning: `gx1/gy1/gz1` and `gx2/gy2/gz2` are per-IMU gyro readings in each IMU's own frame after bias subtraction (bias was measured pre-Y-flip in Step 3). The outer Y negation on `raw_gy` brings the result to the drone's Y axis convention, matching the original sign behavior used by `atan2f` and PID.
+근거: `gx1/gy1/gz1`과 `gx2/gy2/gz2`는 바이어스 감산 후 각 IMU 자체 좌표계에서의 IMU별 자이로 측정값이다(바이어스는 Step 3에서 Y 반전 이전에 측정됨). `raw_gy`에 대한 바깥쪽 Y 부호 반전은 결과를 드론의 Y축 규약으로 가져오며, `atan2f`와 PID가 사용하는 원래의 부호 동작과 일치시킨다.
 
-Also replace the pre-loop init similarly:
+사전 루프 초기화도 유사하게 교체한다:
 
 ```cpp
   IMU1.getDataFromRegisters(e1);
@@ -695,27 +695,27 @@ Also replace the pre-loop init similarly:
   lpf_gz =  (gz1 + gz2) * 0.5f;
 ```
 
-Important sign note: bias for IMU1 (`gyro_bias1`) was measured on raw `e1.gyro[k] * GYRO_SCALE` (no Y flip). Same for IMU2 — but with sign correction applied during accumulation. So in pid_task we subtract bias from the same sign-corrected, pre-Y-flip values. The drone-frame Y flip is applied once at the very end to `raw_gy` and `lpf_gy`.
+중요한 부호 주의사항: IMU1의 바이어스(`gyro_bias1`)는 원시 `e1.gyro[k] * GYRO_SCALE`(Y 반전 없음)로 측정되었다. IMU2도 동일하지만 누적 중에 부호 보정이 적용된다. 따라서 pid_task에서는 동일하게 부호 보정된, Y 반전 이전 값에서 바이어스를 감산한다. 드론 좌표계의 Y 반전은 맨 마지막에 `raw_gy`와 `lpf_gy`에 한 번만 적용된다.
 
-- [ ] **Step 6: Update ready message**
+- [ ] **Step 6: 준비 메시지 갱신**
 
 ```cpp
   Serial.println("SYSTEM READY (Task 3: bias calibration)");
 ```
 
-- [ ] **Step 7: Compile**
+- [ ] **Step 7: 컴파일**
 
 ```bash
 arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/archive/legacy_flight/dual_imu_pid_pwm/
 ```
 
-- [ ] **Step 8: Hardware verification (user)**
+- [ ] **Step 8: 하드웨어 검증 (사용자)**
 
-Flash. On boot serial should show `[CALIB] attempt 1/3` then `[CALIB] IMU1 bias x=... y=... z=...` for both IMUs, then `[CALIB] OK`. Bias values should typically be in -2 ~ +2 deg/s range. After boot, with the drone stationary, `raw_gx/y/z` (telemetry) should hover very close to 0.
+플래시한다. 부팅 시 시리얼에 `[CALIB] attempt 1/3`, 이어서 두 IMU에 대한 `[CALIB] IMU1 bias x=... y=... z=...`, 그다음 `[CALIB] OK`가 표시되어야 한다. 바이어스 값은 일반적으로 -2 ~ +2 deg/s 범위여야 한다. 부팅 후 드론이 정지 상태이면 `raw_gx/y/z`(텔레메트리)는 0에 매우 가깝게 유지되어야 한다.
 
-Then leave the drone sitting for 1-2 minutes (do **not** arm) and observe `angleZ` — it should drift much less than the previous version because yaw integration now uses bias-corrected gyro.
+그런 다음 드론을 1-2분간 그대로 두고(**시동하지 말 것**) `angleZ`를 관찰한다 — 이제 yaw 적분이 바이어스 보정된 자이로를 사용하므로 이전 버전보다 훨씬 적게 드리프트해야 한다.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 9: 커밋**
 
 ```bash
 git add firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino
@@ -724,16 +724,16 @@ git commit -m "feat: startup gyro bias calibration for both IMUs"
 
 ---
 
-## Task 4: Per-IMU fault detection with fallback + disagree check
+## Task 4: 폴백을 갖춘 IMU별 고장 검출 + 불일치 확인
 
-**Goal:** Replace single `check_imu_frozen()` with per-IMU frozen detection that allows fallback, plus a new `check_imu_disagree()` that locks safety if the two IMUs disagree significantly.
+**목표:** 단일 `check_imu_frozen()`을 폴백을 허용하는 IMU별 고착 검출로 교체하고, 두 IMU가 크게 불일치하면 안전 잠금을 거는 새로운 `check_imu_disagree()`를 추가한다.
 
-**Files:**
-- Modify: `firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino`
+**파일:**
+- 수정: `firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino`
 
-- [ ] **Step 1: Add new disagree constants in section 2**
+- [ ] **Step 1: 섹션 2에 새로운 불일치 상수 추가**
 
-After the `IMU_FROZEN_MS` line:
+`IMU_FROZEN_MS` 줄 다음에:
 
 ```cpp
 const float    IMU_DISAGREE_GYRO  = 30.0f;  // deg/s
@@ -741,9 +741,9 @@ const float    IMU_DISAGREE_ACCEL = 0.5f;   // G
 const uint32_t IMU_DISAGREE_MS    = 100;
 ```
 
-- [ ] **Step 2: Replace single-IMU fault state with per-IMU state in section 3**
+- [ ] **Step 2: 섹션 3에서 단일 IMU 고장 상태를 IMU별 상태로 교체**
 
-Find:
+찾을 부분:
 
 ```cpp
 volatile bool     fault_imu      = false;   // OR of fault_imu1/2 for telemetry compatibility
@@ -751,7 +751,7 @@ float             prev_gx        = 0.0f;
 uint32_t          imuFrozenSince = 0;
 ```
 
-Replace with:
+다음으로 교체:
 
 ```cpp
 volatile bool fault_imu  = false;   // OR of fault_imu1/2 for telemetry compatibility
@@ -767,9 +767,9 @@ float gx1_c = 0, gy1_c = 0, gz1_c = 0, ax1_c = 0, ay1_c = 0, az1_c = 0;
 float gx2_c = 0, gy2_c = 0, gz2_c = 0, ax2_c = 0, ay2_c = 0, az2_c = 0;
 ```
 
-- [ ] **Step 3: Replace `check_imu_frozen()` with per-IMU version**
+- [ ] **Step 3: `check_imu_frozen()`을 IMU별 버전으로 교체**
 
-Replace the entire `check_imu_frozen()` function with:
+`check_imu_frozen()` 함수 전체를 다음으로 교체한다:
 
 ```cpp
 // Returns true if BOTH IMUs frozen (lethal). Sets individual fault flags.
@@ -837,11 +837,11 @@ static bool check_imu_disagree() {
 }
 ```
 
-- [ ] **Step 4: Restructure the in-loop read in `pid_task` to populate per-IMU corrected values and fuse with fallback**
+- [ ] **Step 4: `pid_task`의 루프 내부 읽기를 재구성하여 IMU별 보정값을 채우고 폴백과 함께 융합**
 
-The corrected values `gx1_c..az2_c` are stored in **drone frame** (sign-corrected for IMU2, Y already flipped). The fusion averages them and writes directly to `raw_*`.
+보정값 `gx1_c..az2_c`는 **드론 좌표계**로 저장된다(IMU2에 대해 부호 보정되고 Y는 이미 반전됨). 융합은 이들을 평균하여 `raw_*`에 직접 기록한다.
 
-Replace the in-loop dual read block from Task 3 with:
+Task 3의 루프 내부 듀얼 읽기 블록을 다음으로 교체한다:
 
 ```cpp
     IMU1.getDataFromRegisters(e1);
@@ -880,9 +880,9 @@ Replace the in-loop dual read block from Task 3 with:
     }
 ```
 
-Also update the pre-loop initial read similarly to populate `gx1_c..az2_c` and seed `lpf_*` from `raw_*` (which now exists after fusion):
+사전 루프 초기 읽기도 유사하게 갱신하여 `gx1_c..az2_c`를 채우고, (융합 후 이제 존재하는) `raw_*`로부터 `lpf_*`를 시딩한다:
 
-Replace the pre-loop init from Task 3 with:
+Task 3의 사전 루프 초기화를 다음으로 교체한다:
 
 ```cpp
   IMU1.getDataFromRegisters(e1);
@@ -909,15 +909,15 @@ Replace the pre-loop init from Task 3 with:
   lpf_gz = (gz1_c + gz2_c) * 0.5f;
 ```
 
-- [ ] **Step 5: Update the fault gate in pid loop**
+- [ ] **Step 5: PID 루프의 고장 게이트 갱신**
 
-Find the line:
+다음 줄을 찾는다:
 
 ```cpp
     if (check_imu_frozen() || check_rc_timeout() || check_attitude() || safety_lock) {
 ```
 
-Replace with:
+다음으로 교체:
 
 ```cpp
     bool fatal = check_imu_frozen();
@@ -925,16 +925,16 @@ Replace with:
     if (fatal || check_rc_timeout() || check_attitude() || safety_lock) {
 ```
 
-- [ ] **Step 6: Reset per-IMU faults on `start` command in udp_task**
+- [ ] **Step 6: udp_task의 `start` 명령에서 IMU별 고장 리셋**
 
-Find:
+찾을 부분:
 
 ```cpp
     else if (cmd == "start") {
       fault_rc = fault_imu = false;
 ```
 
-Replace with:
+다음으로 교체:
 
 ```cpp
     else if (cmd == "start") {
@@ -942,27 +942,27 @@ Replace with:
       frozenSince1 = frozenSince2 = disagreeSince = 0;
 ```
 
-- [ ] **Step 7: Update ready message**
+- [ ] **Step 7: 준비 메시지 갱신**
 
 ```cpp
   Serial.println("SYSTEM READY (Task 4: per-IMU fault detect + fusion fallback)");
 ```
 
-- [ ] **Step 8: Compile**
+- [ ] **Step 8: 컴파일**
 
 ```bash
 arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/archive/legacy_flight/dual_imu_pid_pwm/
 ```
 
-- [ ] **Step 9: Hardware verification (user)**
+- [ ] **Step 9: 하드웨어 검증 (사용자)**
 
-Two tests, no propellers attached:
+프로펠러를 장착하지 않은 상태에서 두 가지 테스트:
 
-a) **Both IMUs working**: serial should not show any FAULT messages, telemetry `fault_imu` should be 0.
+a) **두 IMU 모두 정상 동작**: 시리얼에 FAULT 메시지가 표시되지 않아야 하고, 텔레메트리 `fault_imu`는 0이어야 한다.
 
-b) **One IMU disconnect test**: With drone powered off, disconnect IMU2 (CS=9). Power on. Boot will log `[CALIB]` with IMU2 reading zeros or noise; IMU1 should be fine. After boot, serial should eventually log `[FAULT] IMU FROZEN`-style messages for IMU2 (or the disagree check may trigger first). Telemetry `fault_imu` becomes 1 but the loop continues to feed IMU1 data into `raw_*`. Drone should NOT arm (safety_lock from disagree if it fires). Power off, reconnect IMU2, repeat: confirm fault clears on next boot.
+b) **한 IMU 분리 테스트**: 드론 전원을 끈 상태에서 IMU2(CS=9)를 분리한다. 전원을 켠다. 부팅 시 IMU2가 0 또는 노이즈를 읽은 채로 `[CALIB]`가 로그된다; IMU1은 정상이어야 한다. 부팅 후 시리얼에는 결국 IMU2에 대한 `[FAULT] IMU FROZEN` 형태의 메시지가 로그되어야 한다(또는 불일치 확인이 먼저 트리거될 수 있음). 텔레메트리 `fault_imu`는 1이 되지만 루프는 계속 IMU1 데이터를 `raw_*`에 공급한다. 드론은 시동되면 안 된다(불일치가 발동하면 safety_lock). 전원을 끄고 IMU2를 다시 연결한 뒤 반복한다: 다음 부팅에서 고장이 해제되는지 확인한다.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 10: 커밋**
 
 ```bash
 git add firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino
@@ -971,22 +971,22 @@ git commit -m "feat: per-IMU fault detect with fallback and disagree check"
 
 ---
 
-## Task 5: Adaptive complementary filter
+## Task 5: 적응형 상보 필터
 
-**Goal:** Replace fixed `ALPHA_COMP = 0.995f` with a function that returns 0.99, 0.995, or 0.999 based on accelerometer deviation from 1G.
+**목표:** 고정된 `ALPHA_COMP = 0.995f`를 1G로부터의 가속도계 편차에 따라 0.99, 0.995, 또는 0.999를 반환하는 함수로 교체한다.
 
-**Files:**
-- Modify: `firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino`
+**파일:**
+- 수정: `firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino`
 
-- [ ] **Step 1: Replace `ALPHA_COMP` constant with the three-level constants and threshold constants**
+- [ ] **Step 1: `ALPHA_COMP` 상수를 3단계 상수 및 임계값 상수로 교체**
 
-Find:
+찾을 부분:
 
 ```cpp
 const float ALPHA_COMP = 0.995f;  // temporary; replaced in Task 5
 ```
 
-Replace with:
+다음으로 교체:
 
 ```cpp
 const float ACCEL_DEV_SOFT = 0.1f;   // G
@@ -1004,16 +1004,16 @@ static inline float compute_alpha(float ax, float ay, float az) {
 }
 ```
 
-- [ ] **Step 2: Use `compute_alpha()` in the complementary filter**
+- [ ] **Step 2: 상보 필터에서 `compute_alpha()` 사용**
 
-In `pid_task`, find the lines that compute `angleX`/`angleY`:
+`pid_task`에서 `angleX`/`angleY`를 계산하는 줄들을 찾는다:
 
 ```cpp
     angleX = ALPHA_COMP * (angleX + lpf_gx * dt) + (1.0f - ALPHA_COMP) * accAngleX;
     angleY = ALPHA_COMP * (angleY + lpf_gy * dt) + (1.0f - ALPHA_COMP) * accAngleY;
 ```
 
-Replace with:
+다음으로 교체:
 
 ```cpp
     float alpha = compute_alpha(lpf_ax, lpf_ay, lpf_az);
@@ -1021,23 +1021,23 @@ Replace with:
     angleY = alpha * (angleY + lpf_gy * dt) + (1.0f - alpha) * accAngleY;
 ```
 
-- [ ] **Step 3: Update ready message**
+- [ ] **Step 3: 준비 메시지 갱신**
 
 ```cpp
   Serial.println("SYSTEM READY (Task 5: adaptive complementary filter)");
 ```
 
-- [ ] **Step 4: Compile**
+- [ ] **Step 4: 컴파일**
 
 ```bash
 arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/archive/legacy_flight/dual_imu_pid_pwm/
 ```
 
-- [ ] **Step 5: Hardware verification (user)**
+- [ ] **Step 5: 하드웨어 검증 (사용자)**
 
-Flash. With drone stationary, `angleX`/`angleY` in telemetry should be **less drift** over a minute than Task 3 (because alpha=0.99 boosts accel correction). When you hand-shake the drone vigorously, angles should not go wild (alpha=0.999 makes it gyro-dominated during chaos).
+플래시한다. 드론이 정지 상태일 때 텔레메트리의 `angleX`/`angleY`는 1분 동안 Task 3보다 **드리프트가 적어야** 한다(alpha=0.99가 가속도 보정을 강화하기 때문). 드론을 손으로 세게 흔들 때 각도가 폭주하면 안 된다(alpha=0.999가 혼란 상황에서 자이로 우세로 만든다).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: 커밋**
 
 ```bash
 git add firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino
@@ -1046,25 +1046,25 @@ git commit -m "feat: adaptive complementary filter based on accel magnitude"
 
 ---
 
-## Task 6: Runtime slow bias estimation
+## Task 6: 런타임 저속 바이어스 추정
 
-**Goal:** While the drone is idle (`base_throttle < 1100`) AND actually stationary (`|gyro| < 2 deg/s`), slowly update `gyro_bias1` and `gyro_bias2` with EMA α=0.0005.
+**목표:** 드론이 유휴 상태(`base_throttle < 1100`)이면서 실제로 정지 상태(`|gyro| < 2 deg/s`)일 때, `gyro_bias1`과 `gyro_bias2`를 EMA α=0.0005로 천천히 갱신한다.
 
-**Files:**
-- Modify: `firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino`
+**파일:**
+- 수정: `firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino`
 
-- [ ] **Step 1: Add runtime bias constants in section 2**
+- [ ] **Step 1: 섹션 2에 런타임 바이어스 상수 추가**
 
-After the disagree constants:
+불일치 상수 다음에:
 
 ```cpp
 const float RUNTIME_BIAS_ALPHA      = 0.0005f;
 const float RUNTIME_BIAS_GYRO_LIMIT = 2.0f;   // deg/s
 ```
 
-- [ ] **Step 2: Add helper at top of `pid_task` (just after `inv_imu_sensor_event_t e1, e2;` declaration)**
+- [ ] **Step 2: `pid_task` 상단에 헬퍼 추가 (`inv_imu_sensor_event_t e1, e2;` 선언 바로 다음)**
 
-Add inside `pid_task`, after the local declarations and before the pre-loop initial read:
+`pid_task` 내부, 지역 선언 다음이자 사전 루프 초기 읽기 이전에 추가한다:
 
 ```cpp
   auto maybe_update_bias = [&](float sgx, float sgy, float sgz,
@@ -1081,16 +1081,16 @@ Add inside `pid_task`, after the local declarations and before the pre-loop init
   };
 ```
 
-- [ ] **Step 3: Call the helper after each in-loop IMU read**
+- [ ] **Step 3: 루프 내부 IMU 읽기마다 헬퍼 호출**
 
-In `pid_task`, immediately after the in-loop reads:
+`pid_task`에서 루프 내부 읽기 바로 다음에:
 
 ```cpp
     IMU1.getDataFromRegisters(e1);
     IMU2.getDataFromRegisters(e2);
 ```
 
-Add right below (apply IMU2 sign correction so the values match how bias was measured):
+바로 아래에 추가한다(값이 바이어스가 측정된 방식과 일치하도록 IMU2 부호 보정을 적용):
 
 ```cpp
     maybe_update_bias(              e1.gyro[0] * GYRO_SCALE,
@@ -1103,23 +1103,23 @@ Add right below (apply IMU2 sign correction so the values match how bias was mea
                       gyro_bias2);
 ```
 
-- [ ] **Step 4: Update ready message**
+- [ ] **Step 4: 준비 메시지 갱신**
 
 ```cpp
   Serial.println("SYSTEM READY (Task 6: runtime bias estimation)");
 ```
 
-- [ ] **Step 5: Compile**
+- [ ] **Step 5: 컴파일**
 
 ```bash
 arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/archive/legacy_flight/dual_imu_pid_pwm/
 ```
 
-- [ ] **Step 6: Hardware verification (user)**
+- [ ] **Step 6: 하드웨어 검증 (사용자)**
 
-Flash. After boot, leave drone stationary for 10 minutes (idle, do not arm). The startup bias is still in the right ballpark and now the runtime EMA further refines it. To verify by inspection, you can temporarily add `Serial.printf` for bias values every 5 seconds; this is optional. The functional check: `angleZ` drift over 10 minutes should be smaller than Task 5 alone.
+플래시한다. 부팅 후 드론을 10분간 정지 상태로 둔다(유휴, 시동하지 말 것). 시동 시 바이어스는 여전히 적절한 범위에 있고, 이제 런타임 EMA가 이를 더 정밀하게 다듬는다. 육안으로 확인하려면 5초마다 바이어스 값을 `Serial.printf`로 임시 추가할 수 있다; 이는 선택 사항이다. 기능적 확인: 10분 동안의 `angleZ` 드리프트는 Task 5 단독보다 작아야 한다.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 7: 커밋**
 
 ```bash
 git add firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino
@@ -1128,38 +1128,38 @@ git commit -m "feat: runtime slow gyro bias estimation while idle"
 
 ---
 
-## Task 7: Final hover flight test + tuning verification
+## Task 7: 최종 호버 비행 테스트 + 튜닝 검증
 
-**Goal:** Verify end-to-end behavior on the actual drone. Update the ready message to a final form and confirm the integration. No code changes other than the message.
+**목표:** 실제 드론에서 엔드투엔드 동작을 검증한다. 준비 메시지를 최종 형태로 갱신하고 통합을 확인한다. 메시지 외에 코드 변경은 없다.
 
-**Files:**
-- Modify: `firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino`
+**파일:**
+- 수정: `firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino`
 
-- [ ] **Step 1: Update ready message to final form**
+- [ ] **Step 1: 준비 메시지를 최종 형태로 갱신**
 
 ```cpp
   Serial.println("PWM_TEST_DUAL_IMU_PID READY");
 ```
 
-- [ ] **Step 2: Compile**
+- [ ] **Step 2: 컴파일**
 
 ```bash
 arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/archive/legacy_flight/dual_imu_pid_pwm/
 ```
 
-- [ ] **Step 3: Hardware verification (user)** — propeller-OFF tests first
+- [ ] **Step 3: 하드웨어 검증 (사용자)** — 프로펠러 분리 상태 테스트 우선
 
-a) Power on, confirm `[CALIB] OK` and `PWM_TEST_DUAL_IMU_PID READY`.
-b) Launch `scripts/tune_pid.py`. Confirm telemetry arrives, `fault_imu=0`, all 14 fields parse.
-c) Send `start` via the tuning script. Confirm motors arm (base_throttle=1100), `fault_imu=0`. Send `stop`. Confirm disarm.
-d) Test PID tuning commands: `pa 2.0`, then `pa 2.5`. Confirm the script reports updated gains.
+a) 전원을 켜고, `[CALIB] OK`와 `PWM_TEST_DUAL_IMU_PID READY`를 확인한다.
+b) `scripts/tune_pid.py`를 실행한다. 텔레메트리가 도착하고, `fault_imu=0`이며, 14개 필드가 모두 파싱되는지 확인한다.
+c) 튜닝 스크립트로 `start`를 보낸다. 모터가 시동되고(base_throttle=1100), `fault_imu=0`인지 확인한다. `stop`을 보낸다. 시동 해제를 확인한다.
+d) PID 튜닝 명령을 테스트한다: `pa 2.0`, 그다음 `pa 2.5`. 스크립트가 갱신된 게인을 보고하는지 확인한다.
 
-- [ ] **Step 4: Hardware verification (user)** — propellers ON, tethered or in safe area
+- [ ] **Step 4: 하드웨어 검증 (사용자)** — 프로펠러 장착, 테더링 또는 안전한 구역에서
 
-a) Hover and observe whether the previous drift-to-one-side behavior reproduces. Expected: significantly reduced.
-b) If drift remains, capture `angleX`/`angleY` from telemetry log and report — may need to revisit alpha thresholds or PID gains.
+a) 호버링하며 이전의 한쪽으로 드리프트하는 동작이 재현되는지 관찰한다. 예상: 크게 감소.
+b) 드리프트가 남아 있으면 텔레메트리 로그에서 `angleX`/`angleY`를 캡처해 보고한다 — alpha 임계값이나 PID 게인을 다시 검토해야 할 수 있다.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: 커밋**
 
 ```bash
 git add firmware/archive/legacy_flight/dual_imu_pid_pwm/dual_imu_pid_pwm.ino

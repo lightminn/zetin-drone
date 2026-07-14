@@ -1,19 +1,18 @@
 # ZETIN Drone
 
-ESP32-S3, dual ICM42670 IMUs, and PWM ESC control are the current development
-stack. Motor PWM and raw IMU acquisition are bench-verified; closed-loop
-stabilization remains experimental.
+현재 개발 스택은 ESP32-S3, 듀얼 ICM42670 IMU, PWM ESC 제어다. 모터 PWM과
+raw IMU 취득은 벤치에서 검증됐지만, 폐쇄루프 자세제어는 아직 실험 단계다.
 
-## Start here
+## 여기서 시작
 
-- [Project overview](docs/project_overview.md)
-- [Current flight-controller candidate](firmware/flight/dual_imu_cascade_pwm/)
-- [Firmware and diagnostic guide](firmware/README.md)
-- [PC control and telemetry tools](scripts/README.md)
-- [UDP protocol and telemetry schema](docs/udp_protocol.md)
-- [Firmware lifecycle catalog](docs/firmware_catalog.md)
+- [프로젝트 개요](docs/project_overview.md)
+- [현행 비행 제어 후보](firmware/flight/dual_imu_cascade_pwm/)
+- [펌웨어 및 진단 가이드](firmware/README.md)
+- [PC 제어·텔레메트리 도구](scripts/README.md)
+- [UDP 프로토콜과 텔레메트리 스키마](docs/udp_protocol.md)
+- [펌웨어 수명주기 카탈로그](docs/firmware_catalog.md)
 
-## Quick verification
+## 빠른 확인
 
 ```bash
 arduino-cli compile --warnings all --fqbn esp32:esp32:esp32s3 \
@@ -24,8 +23,8 @@ arduino-cli compile --warnings all --fqbn esp32:esp32:esp32s3 \
 /home/light/anaconda3/bin/python tools/check_repo_layout.py
 ```
 
-## Safety
+## 안전
 
-Remove propellers for bench tests. Verify power polarity, pin assignments,
-motor order, and correction direction before any restrained flight test.
-Archived experiments are unsupported and may be unsafe.
+벤치 테스트에서는 프로펠러를 제거한다. 제한된 비행 테스트 전에 전원 극성,
+핀 배치, 모터 순서, 보정 방향을 확인한다. 보관된 실험 코드는 지원 대상이
+아니며 안전하지 않을 수 있다.

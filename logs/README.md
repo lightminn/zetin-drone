@@ -1,15 +1,15 @@
-# Flight logs
+# 비행 로그
 
-[`receive_telemetry.py`](../scripts/receive_telemetry.py) and
-[`monitor_telemetry.py`](../scripts/monitor_telemetry.py) create files here with
-the convention:
+[`receive_telemetry.py`](../scripts/receive_telemetry.py)와
+[`monitor_telemetry.py`](../scripts/monitor_telemetry.py)는 다음 규칙으로 이곳에
+파일을 생성한다.
 
 ```text
 flight_log_YYYY-MM-DD_HHMMSS.csv
 ```
 
-Current CSV files contain the PC receive time followed by the 21 firmware
-telemetry fields, for 22 columns total:
+현행 CSV 파일은 PC 수신 시각 다음에 펌웨어 텔레메트리 21개 필드가 이어져
+총 22개 열을 가진다.
 
 ```text
 Timestamp,
@@ -23,16 +23,15 @@ Fault_IMU1, Fault_IMU2, Fault_Disagree,
 Active_IMUs, Mixer_Scaled, Fault_Attitude, Calibration_OK
 ```
 
-The shared parser accepts 10-field packets ending at `Throttle` and 14-field
-packets ending at `RC_Dropped_Pkts`. Fields not present in those legacy packets
-are written as blank cells. `Timestamp` is always added on the PC and is never
-part of the UDP datagram.
+공유 파서는 `Throttle`에서 끝나는 10필드 패킷과 `RC_Dropped_Pkts`에서 끝나는
+14필드 패킷도 받아들인다. 이 과거 패킷에 없는 필드는 빈 셀로 기록된다.
+`Timestamp`는 항상 PC에서 추가하며 UDP 데이터그램의 일부가 아니다.
 
-Analyze a generated log from the repository root:
+저장소 루트에서 생성된 로그를 분석한다.
 
 ```bash
 python scripts/analyze_flight_log.py logs/flight_log_YYYY-MM-DD_HHMMSS.csv
 ```
 
-The schema does not claim battery-voltage, individual motor-output, or PID-term
-columns. See [`udp_protocol.md`](../docs/udp_protocol.md) for the wire format.
+이 스키마는 배터리 전압, 개별 모터 출력, PID 항 관련 열을 주장하지 않는다.
+와이어 포맷은 [`udp_protocol.md`](../docs/udp_protocol.md)를 참고한다.
