@@ -450,7 +450,12 @@ void pid_task(void *pv) {
       fault_attitude = true;
       safety_lock = true;
     }
-    if (!safety_lock && (nowMs - lastRcMs > RC_TIMEOUT_MS)) {
+    // nowMs는 루프 맨 위에서 뜬 값이라, 그 뒤 udp_task(코어0)가 rc를 받아
+    // lastRcMs를 더 나중 값으로 쓰면 unsigned 뺄셈이 언더플로해 즉시 타임아웃이
+    // 터진다. 부호 있는 차이로 비교하면 미래 timestamp는 음수가 되어 무시되고
+    // millis() wrap도 그대로 안전하다.
+    int32_t rcAgeMs = (int32_t)(nowMs - lastRcMs);
+    if (!safety_lock && rcAgeMs > (int32_t)RC_TIMEOUT_MS) {
       fault_rc = true; safety_lock = true;
       Serial.println("[FAULT] RC TIMEOUT");
     }
