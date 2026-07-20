@@ -4,6 +4,7 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <esp_task_wdt.h>
+#include <errno.h>
 
 // ==========================================================
 // 1. 튜닝 파라미터
@@ -131,6 +132,14 @@ static bool checkFreeze(FreezeMon &m, const inv_imu_sensor_event_t &e, uint32_t 
   return frozen;
 }
 
+// RC 워치독. nowMs는 루프 맨 위에서 뜬 값이라 udp_task(코어0)가 그 뒤에
+// lastRcMs를 갱신하면 lastRcMs가 nowMs보다 미래일 수 있다. 부호 있는 차이로
+// 비교해야 unsigned 언더플로로 즉시 타임아웃이 터지지 않는다. millis() wrap도
+// 모듈러 뺄셈이라 그대로 안전하다.
+static inline bool rcTimedOut(uint32_t nowMs, uint32_t lastMs) {
+  return (int32_t)(nowMs - lastMs) > (int32_t)RC_TIMEOUT_MS;
+}
+
 // ==========================================================
 // 4. 시스템 변수
 // ==========================================================
@@ -172,6 +181,7 @@ volatile bool     imu_disagree_now = false;
 
 // scripts/control_dualsense.py 프로토콜 호환용
 volatile uint32_t lastRcSeq       = 0;
+volatile bool     rcSeqValid      = false;
 volatile uint32_t rcTotalPkts     = 0;
 volatile uint32_t rcDroppedPkts   = 0;
 
@@ -450,12 +460,7 @@ void pid_task(void *pv) {
       fault_attitude = true;
       safety_lock = true;
     }
-    // nowMs는 루프 맨 위에서 뜬 값이라, 그 뒤 udp_task(코어0)가 rc를 받아
-    // lastRcMs를 더 나중 값으로 쓰면 unsigned 뺄셈이 언더플로해 즉시 타임아웃이
-    // 터진다. 부호 있는 차이로 비교하면 미래 timestamp는 음수가 되어 무시되고
-    // millis() wrap도 그대로 안전하다.
-    int32_t rcAgeMs = (int32_t)(nowMs - lastRcMs);
-    if (!safety_lock && rcAgeMs > (int32_t)RC_TIMEOUT_MS) {
+    if (!safety_lock && rcTimedOut(nowMs, lastRcMs)) {
       fault_rc = true; safety_lock = true;
       Serial.println("[FAULT] RC TIMEOUT");
     }
@@ -593,9 +598,12 @@ static void handleRcCommand(char *buf) {
   if (strtok_r(nullptr, " \t", &save) != nullptr) return; // 여분 필드 거부
 
   if (count == 4) {
+    if (arg[0][0] == '-' || arg[0][0] == '+') return;
     char *seqEnd;
+    errno = 0;
     unsigned long seqLong = strtoul(arg[0], &seqEnd, 10);
-    if (seqEnd == arg[0] || *seqEnd != '\0') return;
+    if (seqEnd == arg[0] || *seqEnd != '\0' || errno == ERANGE ||
+        seqLong > 0xFFFFFFFFUL) return;
 
     float x, y, z;
     if (!parseFloatStrict(arg[1], x) || !parseFloatStrict(arg[2], y) ||
@@ -603,7 +611,7 @@ static void handleRcCommand(char *buf) {
 
     uint32_t seq = (uint32_t)seqLong;
     rcTotalPkts = rcTotalPkts + 1;
-    if (lastRcSeq != 0) {
+    if (rcSeqValid) {
       int32_t advance = (int32_t)(seq - lastRcSeq); // uint32 wrap도 정상 처리
       if (advance <= 0) {
         rcDroppedPkts = rcDroppedPkts + 1;
@@ -612,6 +620,7 @@ static void handleRcCommand(char *buf) {
       if (advance > 1) rcDroppedPkts += (uint32_t)(advance - 1);
     }
     lastRcSeq = seq;
+    rcSeqValid = true;
     setRcTargets(x, y, z, true);
     return;
   }
@@ -709,6 +718,7 @@ void udp_task(void *pv) {
             fault_disagree = false;
             fault_attitude = false;
             lastRcSeq = 0;
+            rcSeqValid = false;
             lastRcMs = millis();
             base_throttle = 1100; min_throttle = 1050; max_throttle = 1250;
             targetAngleX = 0.0f;
