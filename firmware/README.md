@@ -34,7 +34,13 @@ GPIO 12/13/11, IMU1/IMU2 CS = GPIO 10/9.
 ## 빌드
 
 Arduino CLI와 ESP32-S3 보드 패키지를 사용한다. 빌드 산출물은 저장소 밖
-`/tmp`에 둔다.
+`/tmp`에 둔다. 필요한 라이브러리는 `ICM42670P`(비행·IMU 진단)와
+`ESP32Servo`(`motor_pwm_bench`)다:
+
+```bash
+arduino-cli core install esp32:esp32
+arduino-cli lib install ICM42670P ESP32Servo
+```
 
 ```bash
 sketch=firmware/flight/dual_imu_cascade_pwm

@@ -19,8 +19,9 @@ arduino-cli compile --warnings all --fqbn esp32:esp32:esp32s3 \
   --build-path /tmp/zetin-flight-build \
   firmware/flight/dual_imu_cascade_pwm
 
-/home/light/anaconda3/bin/python -m py_compile scripts/*.py
-/home/light/anaconda3/bin/python tools/check_repo_layout.py
+python3 -m py_compile scripts/*.py
+python3 tools/check_repo_layout.py
+python3 -m unittest discover -s tools -p "test_*.py"
 ```
 
 ## 안전

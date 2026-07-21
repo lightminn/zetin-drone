@@ -24,20 +24,33 @@ stop
 rc <seq> <roll> <pitch> <yaw>
 th <microseconds>
 yaw <0|1>
-pa|ia|da <value>
-pr|ir|dr <value>
-pp|ip|dp <value>
-py|iy|dy <value>
+
+# 안쪽 각속도 PID 게인
+pa|ia|da <value>      # roll+pitch 공통 P/I/D
+pr|ir|dr <value>      # roll P/I/D
+pp|ip|dp <value>      # pitch P/I/D
+py|iy|dy <value>      # yaw P/I/D
+rp|ri|rd <value>      # roll+pitch 공통 P/I/D (pa|ia|da와 동일)
+yp|yi|yd <value>      # yaw P/I/D (py|iy|dy와 동일)
+
+# 바깥 각도 P 게인
+ap <value>            # roll+pitch 공통
+ar|at|ay <value>      # roll / pitch / yaw
 ```
 
-- `start`는 펌웨어의 안전 조건을 통과한 뒤에만 제어를 시동한다.
+- `start`는 캘리브레이션 성공, 기울기 정상, 사용 가능한 IMU 존재, IMU
+  일치 조건을 모두 통과한 뒤에만 시동하며, latch된 fault를 해제하고
+  스로틀 창을 기본값(base 1100, min 1050, max 1250)으로 리셋한다.
   `stop`은 즉시 시동을 해제한다.
-- `rc`는 패킷 시퀀스와 목표 roll, pitch, yaw 각도를 담는다.
-- `th`는 기본 ESC 펄스 폭을 마이크로초 단위로 설정한다. 펌웨어의 제한은
-  그대로 적용된다.
-- `yaw`는 yaw 제어를 켜거나 끈다.
-- `pa/ia/da`는 공유되는 roll·pitch 안쪽 각속도 게인을 설정한다. `r`, `p`,
-  `y` 변형은 각각 roll, pitch, yaw 안쪽 각속도 게인을 독립적으로 설정한다.
+- `rc`는 패킷 시퀀스와 목표 roll, pitch, yaw 각도를 담는다. roll·pitch
+  목표는 ±30°로 제한된다. 시퀀스가 이전보다 작거나 같은 패킷(지연
+  도착·중복)은 폐기된다.
+- `th`는 기본 ESC 펄스 폭을 마이크로초 단위로 설정한다. 1000~1900으로
+  제한되며, min/max 스로틀 창을 기본값 ±150 마진으로 함께 재설정한다.
+- `yaw`는 yaw 제어를 켜거나 끈다. 켜는 순간 현재 추정 yaw 각도를
+  setpoint로 동기화해 점프를 방지한다.
+- 게인 값은 0~100 범위의 유한한 수만 수락하며, 범위를 벗어나거나 파싱에
+  실패한 명령은 무시된다.
 
 수신된 데이터그램은 그 출발지 주소를 텔레메트리 목적지로도 등록한다.
 [`receive_telemetry.py`](../scripts/receive_telemetry.py)와
