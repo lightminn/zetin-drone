@@ -7,6 +7,7 @@
 | 수명주기 | 대상 MCU | 센서 | 모터 프로토콜 | 안전/빌드 메모 | 링크 |
 |---|---|---|---|---|---|
 | 현행 | ESP32-S3 | 듀얼 ICM42670 | PWM | 실험 단계의 비행 제어 후보. 현행 빌드 통과 | [`dual_imu_cascade_pwm`](../firmware/flight/dual_imu_cascade_pwm/) |
+| 현행 | ESP32-S3 | 듀얼 ICM42670 | PWM | flix 기반 쿼터니언 자세제어 후보. 첫 비행 전 벤치 부호 검증 필수 | [`dual_imu_flix_quat_pwm`](../firmware/flight/dual_imu_flix_quat_pwm/) |
 | 현행 | ESP32-S3 | 없음 | PWM | 프로펠러 제거 상태. 4채널 ESC 벤치 테스트 | [`motor_pwm_bench`](../firmware/diagnostics/motor_pwm_bench/) |
 | 현행 | ESP32-S3 | ICM42670 1개 | 없음 | raw SPI 읽기. 별도 18/19/23/5 핀 배치 사용 | [`icm42670_single_raw`](../firmware/diagnostics/icm42670_single_raw/) |
 | 현행 | ESP32-S3 | 듀얼 ICM42670 | 없음 | 듀얼 IMU raw SPI 읽기 | [`icm42670_dual_raw`](../firmware/diagnostics/icm42670_dual_raw/) |

@@ -42,16 +42,17 @@ class TelemetryCompatibilityTest(unittest.TestCase):
         sample = parse_telemetry_packet(packet(10))
         self.assertEqual(9, sample["Throttle"])
         self.assertIsNone(sample["Fault_RC"])
-        self.assertEqual(30, len(sample_to_csv_row("00:00:00.000", sample)))
+        self.assertEqual(len(CSV_FIELDS), len(sample_to_csv_row("00:00:00.000", sample)))
 
     def test_14_field_packet_populates_legacy_fault_and_rc_fields(self):
         sample = parse_telemetry_packet(packet(14))
         self.assertEqual(13, sample["RC_Dropped_Pkts"])
         self.assertIsNone(sample["Fault_IMU1"])
 
-    def test_21_field_packet_populates_cascade_diagnostics(self):
+    def test_21_field_packet_leaves_armed_unknown(self):
         sample = parse_telemetry_packet(packet(21))
         self.assertEqual(20, sample["Calibration_OK"])
+        self.assertIsNone(sample["Armed"])
         for name in (
             "Motor_M1",
             "Motor_M2",
@@ -63,16 +64,23 @@ class TelemetryCompatibilityTest(unittest.TestCase):
             "TgtRate_Yaw",
         ):
             self.assertIsNone(sample[name])
-        self.assertEqual(29, len(TELEMETRY_FIELDS))
-        self.assertEqual(30, len(CSV_FIELDS))
+        self.assertEqual(30, len(TELEMETRY_FIELDS))
+        self.assertEqual(31, len(CSV_FIELDS))
 
-    def test_29_field_packet_parses_new_observability_types(self):
+    def test_22_field_packet_populates_armed(self):
+        sample = parse_telemetry_packet(packet(22))
+        self.assertEqual(21, sample["Armed"])
+        self.assertIsNone(sample["Motor_M1"])
+        self.assertIsNone(sample["PID_Loop_Hz"])
+
+    def test_30_field_packet_parses_new_observability_types(self):
         line = ",".join(
             (
                 "1.25", "-2.50", "3.75",
                 "4.50", "-5.25", "6.00",
                 "0.100", "-0.200", "1.000",
                 "1100", "0", "1", "123", "4", "0", "1", "0", "1", "0", "0", "1",
+                "1",
                 "1101", "1102", "1103", "1104", "998",
                 "12.50", "-23.75", "0.00",
             )
@@ -80,6 +88,8 @@ class TelemetryCompatibilityTest(unittest.TestCase):
 
         sample = parse_telemetry_packet(line)
 
+        self.assertEqual(1, sample["Armed"])
+        self.assertIs(type(sample["Armed"]), int)
         for name, expected in (
             ("Motor_M1", 1101),
             ("Motor_M2", 1102),
@@ -98,7 +108,7 @@ class TelemetryCompatibilityTest(unittest.TestCase):
             self.assertIs(type(sample[name]), float)
 
     def test_explicit_type_map_covers_new_field_types(self):
-        for name in ("Motor_M1", "Motor_M2", "Motor_M3", "Motor_M4", "PID_Loop_Hz"):
+        for name in ("Armed", "Motor_M1", "Motor_M2", "Motor_M3", "Motor_M4", "PID_Loop_Hz"):
             self.assertIs(telemetry_schema.TELEMETRY_FIELD_TYPES[name], int)
         for name in ("TgtRate_Roll", "TgtRate_Pitch", "TgtRate_Yaw"):
             self.assertIs(telemetry_schema.TELEMETRY_FIELD_TYPES[name], float)
@@ -106,6 +116,19 @@ class TelemetryCompatibilityTest(unittest.TestCase):
     def test_short_packet_is_rejected(self):
         with self.assertRaises(ValueError):
             parse_telemetry_packet(packet(9))
+
+    def test_empty_required_field_is_rejected(self):
+        # 필수 필드가 빈 문자열이면 None이 수신 도구의 포맷/연산을 죽이므로
+        # 파서 단계에서 거부해야 한다.
+        with self.assertRaises(ValueError):
+            parse_telemetry_packet("1.0,2.0,3.0,4,5,6,7,8,9,")
+        with self.assertRaises(ValueError):
+            parse_telemetry_packet(",2.0,3.0,4,5,6,7,8,9,10")
+
+    def test_empty_extended_field_stays_unknown(self):
+        sample = parse_telemetry_packet(packet(10) + ",,1")
+        self.assertIsNone(sample["Fault_RC"])
+        self.assertEqual(1, sample["Fault_Critical"])
 
 
 class GainsPacketTest(unittest.TestCase):

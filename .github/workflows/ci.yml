@@ -41,7 +41,7 @@ jobs:
       - name: Compile current sketches
         run: |
           set -e
-          for sketch in firmware/flight/dual_imu_cascade_pwm firmware/diagnostics/*/; do
+          for sketch in firmware/flight/*/ firmware/diagnostics/*/; do
             name=$(basename "$sketch")
             echo "::group::$name"
             arduino-cli compile --warnings all \

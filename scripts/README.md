@@ -16,8 +16,9 @@ python scripts/test_dualsense_input.py
 `receive_telemetry.py`와 `monitor_telemetry.py`는 모두 UDP 4210을 사용하고
 수신 내용을 `logs/`에 기록한다. 두 도구는
 [`telemetry_schema.py`](telemetry_schema.py)의 동일한 필드 정의와 파서를
-공유하므로 10개, 14개, 21개 필드 텔레메트리와 현재 21개 필드 패킷을
-같은 방식으로 해석한다. CSV에는 PC 수신 시각까지 포함해 22개 열을 쓴다.
+공유하므로 10개, 14개, 21개 필드 레거시 텔레메트리와 현재 22개 필드
+패킷을 같은 방식으로 해석한다. CSV에는 PC 수신 시각까지 포함해 23개
+열을 쓴다.
 
 주요 의존성은 `pygame`, `pandas`, `matplotlib`이며 저장소 루트의
 `requirements.txt`에 정리돼 있다. 가상환경 기준 설치 방법:

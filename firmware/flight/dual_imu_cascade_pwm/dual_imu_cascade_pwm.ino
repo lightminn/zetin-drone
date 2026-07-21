@@ -118,6 +118,10 @@ const int   BIAS_CALIB_RETRIES   = 3;
 
 const int OUTER_DIV = 4;                      // outer loop = 1kHz / 4 = 250Hz
 
+// --- 필터/적분 상한 ---
+const float GYRO_SW_LPF_HZ = 80.0f;  // 하드웨어 LPF(121Hz)에 겹치는 소프트웨어 LPF
+const float I_TERM_MAX_US  = 50.0f;  // 축별 적분 기여 상한 (모터 µs)
+
 // ==========================================================
 // 3. 유틸
 // ==========================================================
@@ -245,8 +249,22 @@ IPAddress laptopIP;
 int       laptopPort            = 0;
 bool      connectionEstablished = false;
 
-ICM42670 IMU1(SPI, SPI_CS1);
-ICM42670 IMU2(SPI, SPI_CS2);
+// startGyro/startAccel은 ODR·FSR만 설정하고 UI 필터 대역폭은 칩 전원
+// 기본값(bypass) 그대로 둔다. 그러면 프롭 진동이 필터 없이 PID에 들어오므로
+// protected icm_driver에 접근해 하드웨어 LPF를 켠다 (gyro 121Hz, accel 25Hz).
+class ICM42670WithLPF : public ICM42670 {
+public:
+  ICM42670WithLPF(SPIClass &spi_bus, uint8_t cs) : ICM42670(spi_bus, cs) {}
+  int setLowPassFilters() {
+    int rc = 0;
+    rc |= inv_imu_set_gyro_ln_bw(&icm_driver, GYRO_CONFIG1_GYRO_FILT_BW_121);
+    rc |= inv_imu_set_accel_ln_bw(&icm_driver, ACCEL_CONFIG1_ACCEL_FILT_BW_25);
+    return rc;
+  }
+};
+
+ICM42670WithLPF IMU1(SPI, SPI_CS1);
+ICM42670WithLPF IMU2(SPI, SPI_CS2);
 
 volatile bool  safety_lock  = true;
 volatile float targetAngleX = 0.0f, targetAngleY = 0.0f, targetAngleZ = 0.0f;
@@ -258,7 +276,7 @@ volatile int   motorOut[4] = {1000,1000,1000,1000};
 volatile float tgtRate[3]  = {0,0,0}; // roll,pitch,yaw dps
 volatile int   pidLoopHz   = 0;
 
-float errorSumRoll = 0.0f, errorSumPitch = 0.0f, errorSumYaw = 0.0f;
+float iTermRoll = 0.0f, iTermPitch = 0.0f, iTermYaw = 0.0f;  // 적분 기여 (모터 µs)
 
 float gyro_bias1[3] = {0,0,0};
 float gyro_bias2[3] = {0,0,0};
@@ -403,7 +421,10 @@ static bool calibrate_bias() {
 // 7. 자세 추정용 적응 alpha (가속도 신뢰도 기반)
 // ==========================================================
 const float ACC_DEV_SOFT = 0.10f, ACC_DEV_HARD = 0.30f;
-const float ALPHA_STATIC = 0.99f, ALPHA_NORMAL = 0.995f, ALPHA_DYN = 0.999f;
+// 1kHz 루프 기준 시정수 tau ≈ dt/(1-alpha): 0.999→1s, 0.9995→2s, 0.9998→5s.
+// 이전 값(0.99, tau 0.1s)은 250Hz legacy 루프에서 온 것으로, 1kHz에서는
+// 비행 중 가속도(추력 방향+진동)에 자세 추정이 끌려가 호버가 불안정해진다.
+const float ALPHA_STATIC = 0.999f, ALPHA_NORMAL = 0.9995f, ALPHA_DYN = 0.9998f;
 static inline float compute_alpha(float ax, float ay, float az) {
   float dev = fabsf(sqrtf(ax*ax+ay*ay+az*az) - 1.0f);
   if (dev < ACC_DEV_SOFT) return ALPHA_STATIC;
@@ -426,6 +447,8 @@ void pid_task(void *pv) {
   const float dt = 0.001f;
 
   LowPassFilter lpfD_Roll(40, dt), lpfD_Pitch(40, dt), lpfD_Yaw(40, dt);
+  LowPassFilter lpfG1[3] = {{GYRO_SW_LPF_HZ, dt}, {GYRO_SW_LPF_HZ, dt}, {GYRO_SW_LPF_HZ, dt}};
+  LowPassFilter lpfG2[3] = {{GYRO_SW_LPF_HZ, dt}, {GYRO_SW_LPF_HZ, dt}, {GYRO_SW_LPF_HZ, dt}};
   float prevGyroX = 0.0f, prevGyroY = 0.0f, prevGyroZ = 0.0f;
 
   FreezeMon fm1, fm2;
@@ -492,6 +515,12 @@ void pid_task(void *pv) {
       IMU2_SIGN_X*e2.gyro[0]*GYRO_SCALE - gyro_bias2[0],
       IMU2_SIGN_Y*e2.gyro[1]*GYRO_SCALE - gyro_bias2[1],
       IMU2_SIGN_Z*e2.gyro[2]*GYRO_SCALE - gyro_bias2[2] };
+    // 소프트웨어 LPF. 제어와 IMU 불일치 판정 모두 필터된 각속도를 쓴다.
+    // (진동으로 순간 차이가 15dps를 넘어 비행 중 disagree 컷이 나는 것을 방지)
+    for (int k = 0; k < 3; k++) {
+      g1[k] = lpfG1[k].update(g1[k]);
+      g2[k] = lpfG2[k].update(g2[k]);
+    }
     float a1[3] = { (float)e1.accel[0], (float)e1.accel[1], (float)e1.accel[2] };
     float a2[3] = { IMU2_SIGN_X*e2.accel[0], IMU2_SIGN_Y*e2.accel[1], IMU2_SIGN_Z*e2.accel[2] };
 
@@ -538,7 +567,7 @@ void pid_task(void *pv) {
       active_imus = 0;
       safety_lock = true;
       mixer_scaled = false;
-      errorSumRoll = errorSumPitch = errorSumYaw = 0.0f;
+      iTermRoll = iTermPitch = iTermYaw = 0.0f;
       targetRateRoll = targetRatePitch = targetRateYaw = 0.0f;
       lpfD_Roll.reset(); lpfD_Pitch.reset(); lpfD_Yaw.reset();
       wasLocked = true;
@@ -582,7 +611,7 @@ void pid_task(void *pv) {
     }
     if (safety_lock) {
       mixer_scaled = false;
-      errorSumRoll = errorSumPitch = errorSumYaw = 0.0f;
+      iTermRoll = iTermPitch = iTermYaw = 0.0f;
       targetRateRoll = targetRatePitch = targetRateYaw = 0.0f;
       prevGyroX = bodyGx; prevGyroY = bodyGy; prevGyroZ = bodyGz;
       lpfD_Roll.reset(); lpfD_Pitch.reset(); lpfD_Yaw.reset();
@@ -630,11 +659,11 @@ void pid_task(void *pv) {
     float dYaw   = lpfD_Yaw.update((bodyGz - prevGyroZ) / realDt);
     prevGyroX = bodyGx; prevGyroY = bodyGy; prevGyroZ = bodyGz;
 
-    float pidRoll  = Kp_Rate_Roll *eRoll  + Ki_Rate_Roll *errorSumRoll  - Kd_Rate_Roll *dRoll;
-    float pidPitch = Kp_Rate_Pitch*ePitch + Ki_Rate_Pitch*errorSumPitch - Kd_Rate_Pitch*dPitch;
-    float pidYaw   = yawOn
-                   ? (Kp_Rate_Yaw*eYaw + Ki_Rate_Yaw*errorSumYaw - Kd_Rate_Yaw*dYaw)
-                   : 0.0f;
+    float pidRoll  = Kp_Rate_Roll *eRoll  + iTermRoll  - Kd_Rate_Roll *dRoll;
+    float pidPitch = Kp_Rate_Pitch*ePitch + iTermPitch - Kd_Rate_Pitch*dPitch;
+    // yaw 각도 유지가 꺼져 있어도 rate 감쇠(target 0)는 항상 동작한다.
+    // 모터 토크 불균형과 롤·피치 보정의 반작용으로 생기는 자유 회전을 억제한다.
+    float pidYaw   = Kp_Rate_Yaw*eYaw + iTermYaw - Kd_Rate_Yaw*dYaw;
 
     // ---------- 모터 desaturation + 포화 기반 anti-windup ----------
     const int throttle = base_throttle;
@@ -644,15 +673,21 @@ void pid_task(void *pv) {
 
     // scale은 자세 명령이 실제로 잘린 경우다. collective 이동만 일어난 경우에는
     // 자세 authority가 보존되므로 적분을 계속한다.
+    // 적분은 모터 출력 기여(µs) 단위로 누적하고 I_TERM_MAX_US로 제한한다.
+    // (이전 errorSum ±200deg 클램프는 기본 Ki에서 최대 기여 1µs라 적분이
+    //  사실상 없는 것과 같아 CG 치우침 같은 정상상태 오차를 못 잡았다.)
     if (throttle > 1100 && !mix.scaled) {
-      errorSumRoll  = constrain(errorSumRoll  + eRoll  * realDt, -200.0f, 200.0f);
-      errorSumPitch = constrain(errorSumPitch + ePitch * realDt, -200.0f, 200.0f);
-      if (yawOn) errorSumYaw = constrain(errorSumYaw + eYaw * realDt, -200.0f, 200.0f);
-      else errorSumYaw = 0.0f;
+      iTermRoll  = constrain(iTermRoll  + Ki_Rate_Roll  * eRoll  * realDt,
+                             -I_TERM_MAX_US, I_TERM_MAX_US);
+      iTermPitch = constrain(iTermPitch + Ki_Rate_Pitch * ePitch * realDt,
+                             -I_TERM_MAX_US, I_TERM_MAX_US);
+      if (yawOn) iTermYaw = constrain(iTermYaw + Ki_Rate_Yaw * eYaw * realDt,
+                                      -I_TERM_MAX_US, I_TERM_MAX_US);
+      else iTermYaw = 0.0f;
     } else if (throttle <= 1100) {
-      errorSumRoll = errorSumPitch = errorSumYaw = 0.0f;
+      iTermRoll = iTermPitch = iTermYaw = 0.0f;
     } else if (!yawOn) {
-      errorSumYaw = 0.0f;
+      iTermYaw = 0.0f;
     }
 
     // 모터 PWM의 단일 writer는 PID task로 유지한다.
@@ -793,12 +828,13 @@ static void handleGainCommand(const char *buf) {
 }
 
 // 첫 14개 필드는 기존 PC 스크립트와 호환된다. 뒤 필드는 cascade 진단 확장:
-// fault_imu1,fault_imu2,fault_disagree,active_imus,scaled,fault_attitude,calibration_ok
+// fault_imu1,fault_imu2,fault_disagree,active_imus,scaled,fault_attitude,
+// calibration_ok,armed. 마지막 Armed 필드로 지상국이 START 거부를 감지한다.
 static void sendTelemetry() {
   if (!connectionEstablished) return;
   bool criticalFault = (active_imus == 0) || fault_attitude || !calibration_ok;
   udp.beginPacket(laptopIP, laptopPort);
-  udp.printf("%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%d,%d,%d,%lu,%lu,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.2f,%.2f,%.2f",
+  udp.printf("%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%d,%d,%d,%lu,%lu,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.2f,%.2f,%.2f",
              angleX, angleY, angleZ,
              gyroX, gyroY, gyroZ,
              accX, accY, accZ,
@@ -807,7 +843,7 @@ static void sendTelemetry() {
              (unsigned long)rcTotalPkts, (unsigned long)rcDroppedPkts,
              (int)fault_imu1, (int)fault_imu2, (int)fault_disagree,
              active_imus, (int)mixer_scaled, (int)fault_attitude,
-             (int)calibration_ok,
+             (int)calibration_ok, (int)!safety_lock,
              motorOut[0], motorOut[1], motorOut[2], motorOut[3], pidLoopHz,
              tgtRate[0], tgtRate[1], tgtRate[2]);
   udp.endPacket();
@@ -852,7 +888,13 @@ void udp_task(void *pv) {
         else if (strcmp(buf, "start") == 0) {
           bool overTilt = fabsf(angleX) > SAFETY_ANGLE || fabsf(angleY) > SAFETY_ANGLE;
           bool noUsableImu = imu1_frozen_now && imu2_frozen_now;
-          if (!calibration_ok || overTilt || noUsableImu || imu_disagree_now) {
+          if (!safety_lock) {
+            // 이미 시동 상태. 지상국은 start를 여러 번 재전송하므로, 지연
+            // 도착한 중복 start가 비행 중 fault latch를 지우고 스로틀 창을
+            // 리셋하는 것을 막는다.
+            Serial.println(">>> START ignored (already armed)");
+          }
+          else if (!calibration_ok || overTilt || noUsableImu || imu_disagree_now) {
             safety_lock = true;
             Serial.printf(">>> START REFUSED calib=%d tilt=%d imu=%d disagree=%d\n",
                           (int)calibration_ok, (int)overTilt,
@@ -964,6 +1006,8 @@ void setup() {
   sensorStartStatus |= IMU1.startGyro(1600, 2000);
   sensorStartStatus |= IMU2.startAccel(1600, 16);
   sensorStartStatus |= IMU2.startGyro(1600, 2000);
+  sensorStartStatus |= IMU1.setLowPassFilters();
+  sensorStartStatus |= IMU2.setLowPassFilters();
   if (sensorStartStatus != 0) {
     while (1) { Serial.printf("[FAULT] IMU START FAIL (%d)\n", sensorStartStatus); delay(1000); }
   }

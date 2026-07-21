@@ -2,7 +2,10 @@
 
 The first 10 fields are common to legacy firmware. The first 14 fields retain
 the format used by firmware/archive/legacy_flight/dual_imu_pid_pwm, fields
-14-20 are cascade diagnostics, and fields 21-28 are Tier 1 observability.
+15-21 are diagnostics added by firmware/flight/dual_imu_cascade_pwm, field 22
+(Armed) reports the firmware safety-lock state so ground tools can detect a
+refused/ignored start, and fields 23-30 are Tier 1 observability (motor
+outputs, measured loop rate, and outer-loop target rates).
 """
 
 import math
@@ -30,6 +33,7 @@ TELEMETRY_FIELDS = (
     "Mixer_Scaled",
     "Fault_Attitude",
     "Calibration_OK",
+    "Armed",
     "Motor_M1",
     "Motor_M2",
     "Motor_M3",
@@ -62,6 +66,7 @@ TELEMETRY_FIELD_TYPES = {
     "Mixer_Scaled": int,
     "Fault_Attitude": int,
     "Calibration_OK": int,
+    "Armed": int,
     "Motor_M1": int,
     "Motor_M2": int,
     "Motor_M3": int,
@@ -106,11 +111,14 @@ def _parse_integer(raw, name):
 
 
 def parse_telemetry_packet(line):
-    """Parse a 10-, 14-, 21-, or 29-field packet into a fixed-schema dict.
+    """Parse a 10-, 14-, 21-, 22-, or 30-field packet into a fixed-schema dict.
 
     Fields unavailable in legacy packets are returned as ``None`` so CSV
     files retain the full header without inventing healthy/fault values.
-    Extra future fields are ignored after the known 29 fields.
+    Extra future fields are ignored after the known 30 fields. The first
+    ``REQUIRED_FIELD_COUNT`` fields must be non-empty: consumers format and
+    do arithmetic on them, so a blank there is a malformed packet, not a
+    legacy one.
     """
 
     parts = [part.strip() for part in line.strip().split(",")]
@@ -125,6 +133,8 @@ def parse_telemetry_packet(line):
             break
         raw = parts[index]
         if raw == "":
+            if index < REQUIRED_FIELD_COUNT:
+                raise ValueError(f"required field {name} is empty")
             continue
         if TELEMETRY_FIELD_TYPES[name] is float:
             sample[name] = _parse_finite_float(raw, name)
