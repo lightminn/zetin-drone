@@ -52,6 +52,7 @@ target_yaw       = 0.0
 trim_roll        = 0.0
 trim_pitch       = 0.0
 is_armed         = False
+last_arm_time    = 0.0      # 드론 Armed 필드와 대조할 grace 기준 시각
 
 # [FIX] RC 시퀀스 번호 — 지연 도착한 낡은 패킷을 드론 측에서 폐기할 수 있도록
 rc_seq = 0
@@ -94,8 +95,9 @@ def reliable_send(cmd: str):
 
 
 def arm():
-    global is_armed, current_throttle, throttle_f, target_yaw, rc_seq
+    global is_armed, last_arm_time, current_throttle, throttle_f, target_yaw, rc_seq
     is_armed         = True
+    last_arm_time    = time.monotonic()
     current_throttle = 1100
     throttle_f       = 1100.0
     target_yaw       = 0.0
@@ -174,6 +176,14 @@ def telemetry_thread():
         packet_count += 1
         if packet_count % 20 == 0:
             csv_file.flush()
+
+        # 드론 Armed 필드와 대조: 시동 명령이 거부됐거나(START REFUSED는
+        # 시리얼에만 출력됨) 드론이 스스로 disarm한 것을 감지한다.
+        # start 재전송+텔레메트리 주기를 고려해 1.5초 grace를 둔다.
+        if (is_armed and sample["Armed"] == 0
+                and time.monotonic() - last_arm_time > 1.5):
+            print("\n[FAULT] 드론이 시동 상태가 아님 (시동 거부 또는 드론 측 disarm)")
+            disarm("드론 측 미시동 감지")
 
         # 드론 측 고장 플래그 — fault는 latch되므로 상승 엣지에서만 알린다.
         if fault_rc_drone and not prev_fault_rc:

@@ -687,12 +687,13 @@ static void handleGainCommand(const char *buf) {
 }
 
 // 첫 14개 필드는 기존 PC 스크립트와 호환된다. 뒤 필드는 cascade 진단 확장:
-// fault_imu1,fault_imu2,fault_disagree,active_imus,scaled,fault_attitude,calibration_ok
+// fault_imu1,fault_imu2,fault_disagree,active_imus,scaled,fault_attitude,
+// calibration_ok,armed. 마지막 Armed 필드로 지상국이 START 거부를 감지한다.
 static void sendTelemetry() {
   if (!connectionEstablished) return;
   bool criticalFault = (active_imus == 0) || fault_attitude || !calibration_ok;
   udp.beginPacket(laptopIP, laptopPort);
-  udp.printf("%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%d,%d,%d,%lu,%lu,%d,%d,%d,%d,%d,%d,%d",
+  udp.printf("%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%d,%d,%d,%lu,%lu,%d,%d,%d,%d,%d,%d,%d,%d",
              angleX, angleY, angleZ,
              gyroX, gyroY, gyroZ,
              accX, accY, accZ,
@@ -701,7 +702,7 @@ static void sendTelemetry() {
              (unsigned long)rcTotalPkts, (unsigned long)rcDroppedPkts,
              (int)fault_imu1, (int)fault_imu2, (int)fault_disagree,
              active_imus, (int)mixer_scaled, (int)fault_attitude,
-             (int)calibration_ok);
+             (int)calibration_ok, (int)!safety_lock);
   udp.endPacket();
 }
 
@@ -726,7 +727,13 @@ void udp_task(void *pv) {
         else if (strcmp(buf, "start") == 0) {
           bool overTilt = fabsf(angleX) > SAFETY_ANGLE || fabsf(angleY) > SAFETY_ANGLE;
           bool noUsableImu = imu1_frozen_now && imu2_frozen_now;
-          if (!calibration_ok || overTilt || noUsableImu || imu_disagree_now) {
+          if (!safety_lock) {
+            // 이미 시동 상태. 지상국은 start를 여러 번 재전송하므로, 지연
+            // 도착한 중복 start가 비행 중 fault latch를 지우고 스로틀 창을
+            // 리셋하는 것을 막는다.
+            Serial.println(">>> START ignored (already armed)");
+          }
+          else if (!calibration_ok || overTilt || noUsableImu || imu_disagree_now) {
             safety_lock = true;
             Serial.printf(">>> START REFUSED calib=%d tilt=%d imu=%d disagree=%d\n",
                           (int)calibration_ok, (int)overTilt,

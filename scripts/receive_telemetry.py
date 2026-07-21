@@ -66,8 +66,10 @@ try:
             faults = active_fault_names(sample)
             active_imus = sample["Active_IMUs"]
             scaled = sample["Mixer_Scaled"]
+            armed = sample["Armed"]
             active_text = "?" if active_imus is None else str(active_imus)
             scaled_text = "?" if scaled is None else str(scaled)
+            armed_text = "?" if armed is None else str(armed)
             fault_text = ",".join(faults) if faults else "-"
 
             print(
@@ -75,7 +77,7 @@ try:
                 f"R:{sample['Roll']:6.2f} P:{sample['Pitch']:6.2f} Y:{sample['Yaw']:6.2f} | "
                 f"GX:{sample['Gyro_X']:7.2f} GY:{sample['Gyro_Y']:7.2f} "
                 f"GZ:{sample['Gyro_Z']:7.2f} | "
-                f"Thr:{sample['Throttle']:4d} IMU:{active_text} "
+                f"Thr:{sample['Throttle']:4d} Arm:{armed_text} IMU:{active_text} "
                 f"Scaled:{scaled_text} Fault:{fault_text}"
             )
 
