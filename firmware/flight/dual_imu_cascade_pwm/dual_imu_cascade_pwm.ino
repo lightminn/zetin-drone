@@ -6,6 +6,51 @@
 #include <esp_task_wdt.h>
 #include <errno.h>
 
+#ifndef WIFI_LATENCY_DEBUG
+#define WIFI_LATENCY_DEBUG 0
+#endif
+#if WIFI_LATENCY_DEBUG
+#ifndef WIFI_LATENCY_UDP_THRESHOLD_US
+#define WIFI_LATENCY_UDP_THRESHOLD_US 30000U
+#endif
+#ifndef WIFI_LATENCY_PID_THRESHOLD_US
+#define WIFI_LATENCY_PID_THRESHOLD_US 5000U
+#endif
+
+enum LatKind : uint8_t {
+  LAT_UDP_LOOP,
+  LAT_UDP_PARSE,
+  LAT_UDP_SEND,
+  LAT_PID
+};
+
+struct LatEvt {
+  uint32_t t_ms;
+  uint32_t dur_us;
+  uint8_t kind;
+};
+
+static const uint32_t LAT_RING_SIZE = 128;
+static const uint32_t LAT_RING_MASK = LAT_RING_SIZE - 1;
+
+struct LatRing {
+  LatEvt events[LAT_RING_SIZE];
+  volatile uint32_t head = 0;
+  volatile uint32_t tail = 0;
+  volatile uint32_t dropped = 0;
+};
+
+static LatRing udpLatRing;
+static LatRing pidLatRing;
+
+static uint32_t latUdpMaxUs = 0;
+static uint32_t latPidMaxUs = 0;
+static uint32_t latUdpLoopOver30 = 0;
+static uint32_t latUdpLoopOver100 = 0;
+static uint32_t latUdpLoopOver300 = 0;
+static uint32_t latPidOver5 = 0;
+static uint32_t latLastSummaryMs = 0;
+#endif
 // ==========================================================
 // 1. 튜닝 파라미터
 // ==========================================================
@@ -100,6 +145,57 @@ struct FreezeMon {
   uint32_t since = 0;
   bool     init  = false;
 };
+#if WIFI_LATENCY_DEBUG
+static inline void recordLatEvent(LatRing &ring, uint32_t tMs,
+                                  uint32_t durUs, LatKind kind) {
+  uint32_t head = __atomic_load_n(&ring.head, __ATOMIC_RELAXED);
+  uint32_t tail = __atomic_load_n(&ring.tail, __ATOMIC_ACQUIRE);
+  if (head - tail >= LAT_RING_SIZE) {
+    __atomic_fetch_add(&ring.dropped, 1, __ATOMIC_RELAXED);
+    return;
+  }
+  ring.events[head & LAT_RING_MASK] = {tMs, durUs, (uint8_t)kind};
+  __atomic_store_n(&ring.head, head + 1, __ATOMIC_RELEASE);
+}
+
+static inline bool popLatEvent(LatRing &ring, LatEvt &event) {
+  uint32_t tail = __atomic_load_n(&ring.tail, __ATOMIC_RELAXED);
+  if (tail == __atomic_load_n(&ring.head, __ATOMIC_ACQUIRE)) return false;
+  event = ring.events[tail & LAT_RING_MASK];
+  __atomic_store_n(&ring.tail, tail + 1, __ATOMIC_RELEASE);
+  return true;
+}
+
+static const char *latKindName(uint8_t kind) {
+  switch (kind) {
+    case LAT_UDP_LOOP:  return "UDP_LOOP";
+    case LAT_UDP_PARSE: return "UDP_PARSE";
+    case LAT_UDP_SEND:  return "UDP_SEND";
+    case LAT_PID:       return "PID";
+    default:            return "UNKNOWN";
+  }
+}
+
+static void drainLatRing(LatRing &ring) {
+  LatEvt event;
+  while (popLatEvent(ring, event)) {
+    if (event.kind == LAT_PID) {
+      if (event.dur_us > latPidMaxUs) latPidMaxUs = event.dur_us;
+      if (event.dur_us > 5000U) latPidOver5++;
+    } else {
+      if (event.dur_us > latUdpMaxUs) latUdpMaxUs = event.dur_us;
+      if (event.kind == LAT_UDP_LOOP) {
+        if (event.dur_us > 30000U) latUdpLoopOver30++;
+        if (event.dur_us > 100000U) latUdpLoopOver100++;
+        if (event.dur_us > 300000U) latUdpLoopOver300++;
+      }
+    }
+    Serial.printf("[LAT] t=%lu kind=%s dur_us=%lu\n",
+                  (unsigned long)event.t_ms, latKindName(event.kind),
+                  (unsigned long)event.dur_us);
+  }
+}
+#endif
 static bool checkFreeze(FreezeMon &m, const inv_imu_sensor_event_t &e, uint32_t nowMs) {
   if (!m.init) {
     for (int k = 0; k < 3; k++) {
@@ -350,6 +446,12 @@ void pid_task(void *pv) {
     uint32_t nowMs = millis();
     uint32_t nowUs = micros();
     float realDt = (nowUs - lastMicros) / 1e6f;
+#if WIFI_LATENCY_DEBUG
+    uint32_t rawDtUs = nowUs - lastMicros;
+    if (rawDtUs > WIFI_LATENCY_PID_THRESHOLD_US) {
+      recordLatEvent(pidLatRing, nowMs, rawDtUs, LAT_PID);
+    }
+#endif
     lastMicros = nowUs;
     // 지연 후 vTaskDelayUntil이 catch-up할 때 지나치게 작은 dt로 D항이 튀는 것을 방지.
     if (realDt < 0.0002f || realDt > 0.01f) realDt = dt;
@@ -687,8 +789,26 @@ static void sendTelemetry() {
 void udp_task(void *pv) {
   const int CTRL_MARGIN = 150;
   uint32_t lastSend = 0;
+#if WIFI_LATENCY_DEBUG
+  uint32_t prevTopUs = micros();
+#endif
   while (true) {
+#if WIFI_LATENCY_DEBUG
+    uint32_t topUs = micros();
+    uint32_t loopGapUs = topUs - prevTopUs;
+    prevTopUs = topUs;
+    if (loopGapUs > WIFI_LATENCY_UDP_THRESHOLD_US) {
+      recordLatEvent(udpLatRing, millis(), loopGapUs, LAT_UDP_LOOP);
+    }
+    uint32_t parseStartUs = micros();
+#endif
     int packetSize = udp.parsePacket();
+#if WIFI_LATENCY_DEBUG
+    uint32_t parseDurUs = micros() - parseStartUs;
+    if (parseDurUs > WIFI_LATENCY_UDP_THRESHOLD_US) {
+      recordLatEvent(udpLatRing, millis(), parseDurUs, LAT_UDP_PARSE);
+    }
+#endif
     if (packetSize) {
       laptopIP = udp.remoteIP();
       laptopPort = udp.remotePort();
@@ -760,7 +880,16 @@ void udp_task(void *pv) {
     uint32_t now = millis();
     if (now - lastSend >= 50) {
       lastSend = now;
+#if WIFI_LATENCY_DEBUG
+      uint32_t sendStartUs = micros();
+#endif
       sendTelemetry();
+#if WIFI_LATENCY_DEBUG
+      uint32_t sendDurUs = micros() - sendStartUs;
+      if (sendDurUs > WIFI_LATENCY_UDP_THRESHOLD_US) {
+        recordLatEvent(udpLatRing, millis(), sendDurUs, LAT_UDP_SEND);
+      }
+#endif
     }
     vTaskDelay(1);
   }
@@ -827,6 +956,28 @@ void setup() {
 }
 
 void loop() {
+#if WIFI_LATENCY_DEBUG
+  drainLatRing(udpLatRing);
+  drainLatRing(pidLatRing);
+
+  uint32_t nowMs = millis();
+  if (nowMs - latLastSummaryMs >= 2000U) {
+    latLastSummaryMs = nowMs;
+    uint32_t dropped = __atomic_load_n(&udpLatRing.dropped, __ATOMIC_RELAXED)
+                     + __atomic_load_n(&pidLatRing.dropped, __ATOMIC_RELAXED);
+    Serial.printf("[LATSUM] up=%lu udpMaxUs=%lu pidMaxUs=%lu "
+                  "udpLoopOver30=%lu udpLoopOver100=%lu udpLoopOver300=%lu "
+                  "pidOver5=%lu dropped=%lu\n",
+                  (unsigned long)nowMs,
+                  (unsigned long)latUdpMaxUs, (unsigned long)latPidMaxUs,
+                  (unsigned long)latUdpLoopOver30,
+                  (unsigned long)latUdpLoopOver100,
+                  (unsigned long)latUdpLoopOver300,
+                  (unsigned long)latPidOver5, (unsigned long)dropped);
+  }
+  delay(100);
+#else
   // UDP 객체는 udp_task 한 곳에서만 접근해 cross-core race를 피한다.
   delay(1000);
+#endif
 }
