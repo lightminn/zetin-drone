@@ -1,7 +1,18 @@
+import csv
+import datetime
 import socket
 import threading
 import time
+from pathlib import Path
+
 import pygame
+
+from telemetry_schema import (
+    CSV_FIELDS,
+    active_fault_names,
+    parse_telemetry_packet,
+    sample_to_csv_row,
+)
 
 # === 설정 ===
 UDP_IP        = "192.168.4.1"
@@ -16,11 +27,22 @@ STOP_INTERVAL = 0.02         # 재전송 간격 (초)
 # --- 고장진단 상수 ---
 TELEM_TIMEOUT_SEC = 1.5
 TILT_WARN_DEG     = 30.0
+TILT_WARN_PERIOD  = 1.0      # 과도 기울기 경고 최소 간격 (초)
 
 # 송신/수신 단일 소켓 사용 (드론이 송신자 포트로 텔레메트리를 응답하므로 동일 소켓을 사용해야 함)
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(("", UDP_PORT))
 sock.settimeout(0.1)
+
+# --- 비행 CSV 로그 (receive/monitor와 같은 스키마, logs/에 저장) ---
+SCRIPT_DIR = Path(__file__).resolve().parent
+LOG_DIR = SCRIPT_DIR.parent / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+log_path = LOG_DIR / f"flight_log_{datetime.datetime.now():%Y-%m-%d_%H%M%S}.csv"
+csv_file = log_path.open("w", newline="", encoding="utf-8")
+csv_writer = csv.writer(csv_file)
+csv_writer.writerow(CSV_FIELDS)
+print(f"[LOG] 비행 로그: {log_path}")
 
 # === 상태 변수 ===
 current_throttle = 1000
@@ -39,7 +61,7 @@ telem_angle_x     = 0.0
 telem_angle_y     = 0.0
 telem_throttle    = 0
 fault_rc_drone    = False
-fault_imu_drone   = False
+fault_critical_drone = False   # Fault_Critical: IMU 상실/과도 기울기/캘리브레이션 실패
 telem_total_pkts  = 0
 telem_dropped_pkts = 0
 
@@ -98,57 +120,83 @@ def deadzone(v: float, dz: float = 0.05) -> float:
 def telemetry_thread():
     global last_telem_time
     global telem_angle_x, telem_angle_y, telem_throttle
-    global fault_rc_drone, fault_imu_drone
+    global fault_rc_drone, fault_critical_drone
     global telem_total_pkts, telem_dropped_pkts
 
     print("[TELEM] 수신 스레드 시작")
+    prev_fault_rc = False
+    prev_fault_critical = False
+    last_connect = 0.0
+    last_tilt_warn = 0.0
+    packet_count = 0
+
     while True:
+        # 시동 전에도 텔레메트리를 받도록 주기적으로 목적지를 등록한다.
+        now = time.monotonic()
+        if now - last_connect >= 1.0:
+            send_cmd("connect")
+            last_connect = now
+
         try:
             data, _ = sock.recvfrom(512)
-            fields = data.decode().split(',')
-            if len(fields) < 10:
-                continue
-
-            with telem_lock:
-                telem_angle_x      = float(fields[0])
-                telem_angle_y      = float(fields[1])
-                telem_throttle     = int(fields[9])
-                fault_rc_drone     = bool(int(fields[10])) if len(fields) > 10 else False
-                fault_imu_drone    = bool(int(fields[11])) if len(fields) > 11 else False
-                telem_total_pkts   = int(fields[12])       if len(fields) > 12 else 0
-                telem_dropped_pkts = int(fields[13])       if len(fields) > 13 else 0
-                last_telem_time    = time.monotonic()
-
-            # 드론 측 고장 플래그
-            if fault_rc_drone:
-                print("\n[FAULT] 드론: RC 타임아웃 감지됨")
-                if is_armed:
-                    disarm("드론 RC 타임아웃")
-
-            if fault_imu_drone:
-                print("\n[FAULT] 드론: IMU 동결 감지됨")
-                if is_armed:
-                    disarm("드론 IMU 고장")
-
-            # 패킷 드롭률 출력 (10% 초과 시 경고)
-            if telem_total_pkts > 100 and telem_total_pkts % 50 == 0:
-                drop_rate = telem_dropped_pkts / telem_total_pkts * 100
-                if drop_rate > 10.0:
-                    print(f"\n[WARN] 패킷 드롭률 {drop_rate:.1f}% ({telem_dropped_pkts}/{telem_total_pkts}) - 간섭 의심")
-
-            # 과도 기울기 경고
-            ax, ay = abs(telem_angle_x), abs(telem_angle_y)
-            if is_armed and (ax > TILT_WARN_DEG or ay > TILT_WARN_DEG):
-                print(f"\n[WARN] 과도 기울기 - Roll:{telem_angle_x:.1f}° Pitch:{telem_angle_y:.1f}°")
-
         except socket.timeout:
             if is_armed and last_telem_time > 0:
                 elapsed = time.monotonic() - last_telem_time
                 if elapsed > TELEM_TIMEOUT_SEC:
                     print(f"\n[FAULT] 텔레메트리 {elapsed:.1f}s 수신 없음 - 긴급 정지")
                     disarm("연결 끊김")
-        except Exception as e:
-            print(f"[TELEM ERR] {e}")
+            continue
+        except OSError as e:
+            print(f"[TELEM ERR] 소켓 오류: {e}")
+            continue
+
+        try:
+            sample = parse_telemetry_packet(data.decode("utf-8", errors="strict"))
+        except (UnicodeDecodeError, ValueError):
+            continue
+
+        with telem_lock:
+            telem_angle_x      = sample["Roll"]
+            telem_angle_y      = sample["Pitch"]
+            telem_throttle     = sample["Throttle"] or 0
+            fault_rc_drone     = sample["Fault_RC"] == 1
+            fault_critical_drone = sample["Fault_Critical"] == 1
+            telem_total_pkts   = sample["RC_Total_Pkts"] or 0
+            telem_dropped_pkts = sample["RC_Dropped_Pkts"] or 0
+            last_telem_time    = time.monotonic()
+
+        now_str = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        csv_writer.writerow(sample_to_csv_row(now_str, sample))
+        packet_count += 1
+        if packet_count % 20 == 0:
+            csv_file.flush()
+
+        # 드론 측 고장 플래그 — fault는 latch되므로 상승 엣지에서만 알린다.
+        if fault_rc_drone and not prev_fault_rc:
+            print("\n[FAULT] 드론: RC 타임아웃 감지됨")
+            if is_armed:
+                disarm("드론 RC 타임아웃")
+        prev_fault_rc = fault_rc_drone
+
+        if fault_critical_drone and not prev_fault_critical:
+            detail = ", ".join(active_fault_names(sample)) or "원인 미상"
+            print(f"\n[FAULT] 드론: 치명 고장 감지됨 ({detail})")
+            if is_armed:
+                disarm("드론 치명 고장")
+        prev_fault_critical = fault_critical_drone
+
+        # 패킷 드롭률 출력 (10% 초과 시 경고)
+        if telem_total_pkts > 100 and telem_total_pkts % 50 == 0:
+            drop_rate = telem_dropped_pkts / telem_total_pkts * 100
+            if drop_rate > 10.0:
+                print(f"\n[WARN] 패킷 드롭률 {drop_rate:.1f}% ({telem_dropped_pkts}/{telem_total_pkts}) - 간섭 의심")
+
+        # 과도 기울기 경고 (1초에 한 번만)
+        ax, ay = abs(telem_angle_x), abs(telem_angle_y)
+        if (is_armed and (ax > TILT_WARN_DEG or ay > TILT_WARN_DEG)
+                and now - last_tilt_warn >= TILT_WARN_PERIOD):
+            print(f"\n[WARN] 과도 기울기 - Roll:{telem_angle_x:.1f}° Pitch:{telem_angle_y:.1f}°")
+            last_tilt_warn = now
 
 
 # ==========================================================
@@ -250,12 +298,17 @@ t_ctrl  = threading.Thread(target=controller_thread, daemon=True)
 t_telem.start()
 t_ctrl.start()
 
-while True:
-    try:
-        msg = input()
-        if msg:
-            send_cmd(msg)
-    except KeyboardInterrupt:
-        if is_armed:
-            disarm("키보드 인터럽트")
-        break
+try:
+    while True:
+        try:
+            msg = input()
+            if msg:
+                send_cmd(msg)
+        except KeyboardInterrupt:
+            if is_armed:
+                disarm("키보드 인터럽트")
+            break
+finally:
+    csv_file.flush()
+    csv_file.close()
+    print(f"[LOG] 저장 완료: {log_path}")
