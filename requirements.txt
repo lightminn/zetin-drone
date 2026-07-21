@@ -1,0 +1,5 @@
+# PC 지상국 도구 의존성 (scripts/)
+# telemetry_schema.py / tools/는 표준 라이브러리만 사용한다.
+matplotlib>=3.7
+pandas>=2.0
+pygame>=2.5

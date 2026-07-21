@@ -1,8 +1,11 @@
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from tools.check_repo_layout import (
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from check_repo_layout import (  # noqa: E402
     check_markdown_links,
     check_migration_map,
     check_sketch_names,

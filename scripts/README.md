@@ -19,8 +19,18 @@ python scripts/test_dualsense_input.py
 공유하므로 10개, 14개, 21개 필드 텔레메트리와 현재 21개 필드 패킷을
 같은 방식으로 해석한다. CSV에는 PC 수신 시각까지 포함해 22개 열을 쓴다.
 
-주요 의존성은 `pygame`, `pandas`, `matplotlib`이며 이 저장소 환경에서는
-conda `base` Python(`/home/light/anaconda3/bin/python`)을 기준으로 검사한다.
+주요 의존성은 `pygame`, `pandas`, `matplotlib`이며 저장소 루트의
+`requirements.txt`에 정리돼 있다. 가상환경 기준 설치 방법:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+`control_dualsense.py`, `receive_telemetry.py`, `monitor_telemetry.py`는 모두
+UDP 4210을 bind하므로 한 번에 하나만 실행한다. 펌웨어 프로토콜상 텔레메트리
+목적지가 하나뿐이라 동시 실행은 지원하지 않으며, DualSense 조종 중 로그는
+`control_dualsense.py`가 직접 `logs/`에 기록한다.
 
 오래된 GPS/TCP 실험 도구는 [`archive/README.md`](archive/README.md)에서만
 찾을 수 있으며 현행 지원 범위가 아니다.

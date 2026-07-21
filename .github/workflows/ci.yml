@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Byte-compile PC tools
+        run: python -m py_compile scripts/*.py
+      - name: Repository layout checks
+        run: python tools/check_repo_layout.py
+      - name: Unit tests
+        run: python -m unittest discover -s tools -p "test_*.py" -v
+
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-arduino-cli@v2
+      - name: Cache Arduino platform and libraries
+        uses: actions/cache@v4
+        with:
+          path: ~/.arduino15
+          key: arduino-esp32-3.3.10-icm42670p-1.0.9-esp32servo-3.2.1
+      - name: Install ESP32 core and libraries
+        run: |
+          arduino-cli config init --overwrite
+          arduino-cli config add board_manager.additional_urls \
+            https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@3.3.10
+          arduino-cli lib install ICM42670P@1.0.9 ESP32Servo@3.2.1
+      - name: Compile current sketches
+        run: |
+          set -e
+          for sketch in firmware/flight/dual_imu_cascade_pwm firmware/diagnostics/*/; do
+            name=$(basename "$sketch")
+            echo "::group::$name"
+            arduino-cli compile --warnings all \
+              --fqbn esp32:esp32:esp32s3 \
+              --build-path "/tmp/zetin-$name" \
+              "$sketch"
+            echo "::endgroup::"
+          done
