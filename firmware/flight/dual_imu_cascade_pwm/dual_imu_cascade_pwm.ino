@@ -30,7 +30,7 @@ volatile bool yaw_enabled   = false;   // "yaw 1" 로 활성화
 const char* WIFI_SSID    = "Drone_Tuning";
 const char* WIFI_PASS    = "12345678";
 const int   UDP_PORT     = 4210;
-const int   WIFI_CHANNEL = 6;
+const int   WIFI_CHANNEL = 11;  // ch6 혼잡(인근 AP 다수) → 스캔상 가장 빈 채널로 이동
 
 const int pinM1   = 4;   // FL
 const int pinM2   = 5;   // RR
