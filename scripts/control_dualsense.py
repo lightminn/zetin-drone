@@ -20,6 +20,7 @@ UDP_PORT      = 4210
 CTRL_LOOP_HZ  = 20          # 제어 루프 주기 (50ms)
 MAX_ANGLE     = 15.0
 YAW_RATE      = 1.0
+THROTTLE_RATE = 200.0        # 오른쪽 스틱 최대 편향 시 스로틀 변화율 (µs/s)
 TRIM_STEP     = 0.2
 STOP_RETRIES  = 5            # stop/start 재전송 횟수
 STOP_INTERVAL = 0.02         # 재전송 간격 (초)
@@ -46,6 +47,7 @@ print(f"[LOG] 비행 로그: {log_path}")
 
 # === 상태 변수 ===
 current_throttle = 1000
+throttle_f       = 1000.0   # 아날로그 스로틀 적분용 (µs, float)
 target_yaw       = 0.0
 trim_roll        = 0.0
 trim_pitch       = 0.0
@@ -92,9 +94,10 @@ def reliable_send(cmd: str):
 
 
 def arm():
-    global is_armed, current_throttle, target_yaw, rc_seq
+    global is_armed, current_throttle, throttle_f, target_yaw, rc_seq
     is_armed         = True
     current_throttle = 1100
+    throttle_f       = 1100.0
     target_yaw       = 0.0
     rc_seq           = 0   # 재시동 시 시퀀스 번호 리셋
     reliable_send("start")
@@ -102,10 +105,11 @@ def arm():
 
 
 def disarm(reason: str = "수동"):
-    global is_armed, current_throttle, target_yaw
+    global is_armed, current_throttle, throttle_f, target_yaw
     reliable_send("stop")
     is_armed         = False
     current_throttle = 1000
+    throttle_f       = 1000.0
     target_yaw       = 0.0
     print(f"\n>>> [SYSTEM] DISARMED ({reason})")
 
@@ -203,7 +207,7 @@ def telemetry_thread():
 # 컨트롤러 처리 스레드
 # ==========================================================
 def controller_thread():
-    global current_throttle, target_yaw, trim_roll, trim_pitch, rc_seq
+    global current_throttle, throttle_f, target_yaw, trim_roll, trim_pitch, rc_seq
     global last_btn_start, last_btn_R1, last_btn_L1
     global last_trig_R2, last_trig_L2, last_hat_state
 
@@ -218,14 +222,16 @@ def controller_thread():
 
     print("========== DRONE CONTROLLER ==========")
     print(f" [X]        Arm / Disarm")
-    print(f" [R2/L2]    Throttle +10 / -10")
+    print(f" [R-Stick↕] Throttle (연속, 최대 {THROTTLE_RATE:.0f}µs/s)")
+    print(f" [R2/L2]    Throttle +10 / -10 (스텝)")
     print(f" [R1/L1]    Throttle  +1 /  -1")
     print(f" [DPAD]     Trim  |  [PS] Trim Reset")
-    print(f" [Sticks]   Roll / Pitch / Yaw  (max ±{MAX_ANGLE}°)")
+    print(f" [L-Stick]  Roll / Pitch,  [R-Stick↔] Yaw  (max ±{MAX_ANGLE}°)")
     print("======================================")
 
     loop_dt = 1.0 / CTRL_LOOP_HZ
     next_loop = time.monotonic()
+    last_th_print = 0.0
 
     while True:
         # [FIX] sleep 누적 오차 제거: monotonic 기반 정밀 타이밍
@@ -235,6 +241,20 @@ def controller_thread():
         next_loop += loop_dt
 
         pygame.event.pump()
+
+        # --- 컨트롤러 분리 감지: RC 스트림이 끊기기 전에 능동적으로 disarm ---
+        if pygame.joystick.get_count() == 0:
+            if is_armed:
+                disarm("컨트롤러 분리")
+            print("\n[ERR] 컨트롤러 분리됨 - 재연결 대기 중...")
+            while pygame.joystick.get_count() == 0:
+                time.sleep(0.5)
+                pygame.event.pump()
+            joy = pygame.joystick.Joystick(0)
+            joy.init()
+            next_loop = time.monotonic()
+            print(f"[OK] 컨트롤러 재연결됨: {joy.get_name()}")
+            continue
 
         # --- 시동 토글 ---
         btn_start = joy.get_button(0)
@@ -246,7 +266,13 @@ def controller_thread():
         last_btn_start = btn_start
 
         if is_armed:
-            # --- 스로틀 제어 ---
+            # --- 스로틀 제어 (아날로그: 오른쪽 스틱 상하 = rate control) ---
+            # 버튼 스텝만으로는 이륙 스로틀까지 수십 번 연타가 필요해
+            # 부드러운 이륙이 불가능하다. 스틱은 µs/s 비율로 연속 적분한다.
+            thr_stick = -deadzone(joy.get_axis(3))
+            if thr_stick != 0.0:
+                throttle_f += thr_stick * THROTTLE_RATE * loop_dt
+
             curr_R1 = joy.get_button(10)
             curr_L1 = joy.get_button(9)
             curr_R2 = joy.get_axis(5) > 0.0
@@ -257,11 +283,18 @@ def controller_thread():
             elif curr_L2 and not last_trig_L2: delta = -10
             elif curr_R1 and not last_btn_R1:  delta = +1
             elif curr_L1 and not last_btn_L1:  delta = -1
-
             if delta:
-                current_throttle = max(1000, min(1900, current_throttle + delta))
+                throttle_f += delta
+
+            throttle_f = max(1000.0, min(1900.0, throttle_f))
+            new_throttle = int(round(throttle_f))
+            if new_throttle != current_throttle:
+                current_throttle = new_throttle
                 send_cmd(f"th {current_throttle}")
-                print(f" [TH] {'+' if delta > 0 else ''}{delta} -> {current_throttle}")
+                now_mono = time.monotonic()
+                if delta or now_mono - last_th_print >= 0.5:
+                    print(f" [TH] -> {current_throttle}")
+                    last_th_print = now_mono
 
             last_trig_R2 = curr_R2; last_trig_L2 = curr_L2
             last_btn_R1  = curr_R1; last_btn_L1  = curr_L1
