@@ -8,6 +8,7 @@ from pathlib import Path
 from telemetry_schema import (
     CSV_FIELDS,
     active_fault_names,
+    is_gains_packet,
     parse_telemetry_packet,
     sample_to_csv_row,
 )
@@ -55,6 +56,8 @@ try:
         try:
             data, _ = sock.recvfrom(2048)
             line = data.decode("utf-8", errors="strict").strip()
+            if is_gains_packet(line):
+                continue
             sample = parse_telemetry_packet(line)
 
             now_str = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]

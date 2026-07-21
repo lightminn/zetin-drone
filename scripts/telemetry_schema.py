@@ -1,8 +1,8 @@
 """Shared parser for the drone UDP telemetry and CSV schema.
 
 The first 10 fields are common to legacy firmware. The first 14 fields retain
-the format used by firmware/archive/legacy_flight/dual_imu_pid_pwm, and fields
-14-20 are diagnostics added by firmware/flight/dual_imu_cascade_pwm.
+the format used by firmware/archive/legacy_flight/dual_imu_pid_pwm, fields
+14-20 are cascade diagnostics, and fields 21-28 are Tier 1 observability.
 """
 
 import math
@@ -30,11 +30,65 @@ TELEMETRY_FIELDS = (
     "Mixer_Scaled",
     "Fault_Attitude",
     "Calibration_OK",
+    "Motor_M1",
+    "Motor_M2",
+    "Motor_M3",
+    "Motor_M4",
+    "PID_Loop_Hz",
+    "TgtRate_Roll",
+    "TgtRate_Pitch",
+    "TgtRate_Yaw",
+)
+
+TELEMETRY_FIELD_TYPES = {
+    "Roll": float,
+    "Pitch": float,
+    "Yaw": float,
+    "Gyro_X": float,
+    "Gyro_Y": float,
+    "Gyro_Z": float,
+    "Accel_X": float,
+    "Accel_Y": float,
+    "Accel_Z": float,
+    "Throttle": int,
+    "Fault_RC": int,
+    "Fault_Critical": int,
+    "RC_Total_Pkts": int,
+    "RC_Dropped_Pkts": int,
+    "Fault_IMU1": int,
+    "Fault_IMU2": int,
+    "Fault_Disagree": int,
+    "Active_IMUs": int,
+    "Mixer_Scaled": int,
+    "Fault_Attitude": int,
+    "Calibration_OK": int,
+    "Motor_M1": int,
+    "Motor_M2": int,
+    "Motor_M3": int,
+    "Motor_M4": int,
+    "PID_Loop_Hz": int,
+    "TgtRate_Roll": float,
+    "TgtRate_Pitch": float,
+    "TgtRate_Yaw": float,
+}
+
+GAIN_FIELDS = (
+    "Kp_Angle_Roll",
+    "Kp_Angle_Pitch",
+    "Kp_Angle_Yaw",
+    "Kp_Rate_Roll",
+    "Kp_Rate_Pitch",
+    "Kp_Rate_Yaw",
+    "Ki_Rate_Roll",
+    "Ki_Rate_Pitch",
+    "Ki_Rate_Yaw",
+    "Kd_Rate_Roll",
+    "Kd_Rate_Pitch",
+    "Kd_Rate_Yaw",
 )
 
 CSV_FIELDS = ("Timestamp",) + TELEMETRY_FIELDS
 REQUIRED_FIELD_COUNT = 10
-FLOAT_FIELD_COUNT = 9
 
 
 def _parse_finite_float(raw, name):
@@ -52,11 +106,11 @@ def _parse_integer(raw, name):
 
 
 def parse_telemetry_packet(line):
-    """Parse a 10-, 14-, or 21-field packet into a fixed-schema dict.
+    """Parse a 10-, 14-, 21-, or 29-field packet into a fixed-schema dict.
 
     Fields unavailable in legacy packets are returned as ``None`` so CSV
     files retain the full header without inventing healthy/fault values.
-    Extra future fields are ignored after the known 21 fields.
+    Extra future fields are ignored after the known 29 fields.
     """
 
     parts = [part.strip() for part in line.strip().split(",")]
@@ -72,11 +126,33 @@ def parse_telemetry_packet(line):
         raw = parts[index]
         if raw == "":
             continue
-        if index < FLOAT_FIELD_COUNT:
+        if TELEMETRY_FIELD_TYPES[name] is float:
             sample[name] = _parse_finite_float(raw, name)
         else:
             sample[name] = _parse_integer(raw, name)
     return sample
+
+
+def is_gains_packet(line):
+    """Return whether ``line`` is a gain-readback datagram."""
+
+    return line.strip().startswith("GAINS,")
+
+
+def parse_gains_packet(line):
+    """Parse a gain-readback datagram into its 12 named float values."""
+
+    parts = [part.strip() for part in line.strip().split(",")]
+    if len(parts) != len(GAIN_FIELDS) + 1:
+        raise ValueError(
+            f"gains has {len(parts) - 1} fields; need exactly {len(GAIN_FIELDS)}"
+        )
+    if parts[0] != "GAINS":
+        raise ValueError("not a GAINS packet")
+    return {
+        name: _parse_finite_float(raw, name)
+        for name, raw in zip(GAIN_FIELDS, parts[1:])
+    }
 
 
 def sample_to_csv_row(timestamp, sample):

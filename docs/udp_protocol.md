@@ -24,6 +24,7 @@ stop
 rc <seq> <roll> <pitch> <yaw>
 th <microseconds>
 yaw <0|1>
+gains                    # 현재 PID 게인 12개를 1회 응답
 
 # 안쪽 각속도 PID 게인
 pa|ia|da <value>      # roll+pitch 공통 P/I/D
@@ -49,6 +50,8 @@ ar|at|ay <value>      # roll / pitch / yaw
   제한되며, min/max 스로틀 창을 기본값 ±150 마진으로 함께 재설정한다.
 - `yaw`는 yaw 제어를 켜거나 끈다. 켜는 순간 현재 추정 yaw 각도를
   setpoint로 동기화해 점프를 방지한다.
+- `gains`는 현재 cascade PID 게인 12개를 `GAINS,<...>` 데이터그램 한 개로
+  요청을 보낸 지상국에 응답한다. 값은 소수점 아래 4자리로 전송한다.
 - 게인 값은 0~100 범위의 유한한 수만 수락하며, 범위를 벗어나거나 파싱에
   실패한 명령은 무시된다.
 
@@ -59,7 +62,7 @@ ar|at|ay <value>      # roll / pitch / yaw
 
 ## 드론 → 지상국
 
-텔레메트리는 다음 21개 필드를 정확한 순서로 담은 쉼표 구분 데이터그램이다.
+텔레메트리는 다음 29개 필드를 정확한 순서로 담은 쉼표 구분 데이터그램이다.
 
 ```text
 Roll, Pitch, Yaw,
@@ -69,16 +72,41 @@ Throttle,
 Fault_RC, Fault_Critical,
 RC_Total_Pkts, RC_Dropped_Pkts,
 Fault_IMU1, Fault_IMU2, Fault_Disagree,
-Active_IMUs, Mixer_Scaled, Fault_Attitude, Calibration_OK
+Active_IMUs, Mixer_Scaled, Fault_Attitude, Calibration_OK,
+Motor_M1, Motor_M2, Motor_M3, Motor_M4, PID_Loop_Hz,
+TgtRate_Roll, TgtRate_Pitch, TgtRate_Yaw
 ```
+
+기존 21개 필드는 그대로 유지하며, 뒤에 다음 8개 필드를 append한다.
+
+| 순서 | 필드 | 타입 | 의미 |
+|---|---|---|---|
+| 22~25 | `Motor_M1`~`Motor_M4` | int | 실제 모터 PWM 출력(µs), 시동 해제 시 1000 |
+| 26 | `PID_Loop_Hz` | int | `pid_task`의 실측 루프 주파수(Hz) |
+| 27~29 | `TgtRate_Roll`, `TgtRate_Pitch`, `TgtRate_Yaw` | float | 바깥 각도 루프가 만든 목표 각속도(dps) |
+
+`gains` 명령의 one-shot 응답은 텔레메트리와 별도인 다음 형식이다.
+
+```text
+GAINS,
+Kp_Angle_Roll, Kp_Angle_Pitch, Kp_Angle_Yaw,
+Kp_Rate_Roll, Kp_Rate_Pitch, Kp_Rate_Yaw,
+Ki_Rate_Roll, Ki_Rate_Pitch, Ki_Rate_Yaw,
+Kd_Rate_Roll, Kd_Rate_Pitch, Kd_Rate_Yaw
+```
+
+위 이름은 설명을 위한 것이며 실제 패킷에는 같은 순서의 숫자 12개만 들어간다.
+수신기는 `GAINS,` 접두사를 먼저 분리하므로 이 응답을 텔레메트리 불량으로
+계수하지 않는다. `tune_pid.py`는 각 이름과 값을 한 줄로 출력한다.
 
 `telemetry_schema.py`는 과거 패킷 길이도 함께 받아들인다.
 
 - 10필드 패킷은 `Throttle`에서 끝난다.
 - 14필드 패킷은 `RC_Dropped_Pkts`에서 끝난다.
+- 21필드 패킷은 `Calibration_OK`에서 끝난다.
 - 과거 패킷에 없는 값은 정규화된 CSV에서 빈 셀이 된다.
 - `Timestamp`는 드론이 보내지 않는다. 지상 도구가 CSV의 첫 열로 추가하므로
-  현행 패킷은 22개 열이 된다.
+  현행 CSV는 30개 열이 된다.
 
 공유 구현은
 [`telemetry_schema.py`](../scripts/telemetry_schema.py)에 있다.

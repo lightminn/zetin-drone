@@ -2,7 +2,12 @@ import socket
 import threading
 import time
 
-from telemetry_schema import active_fault_names, parse_telemetry_packet
+from telemetry_schema import (
+    active_fault_names,
+    is_gains_packet,
+    parse_gains_packet,
+    parse_telemetry_packet,
+)
 
 # ESP32 설정
 UDP_IP = "192.168.4.1" # ESP32 SoftAP 기본 IP
@@ -27,12 +32,26 @@ def receive_thread():
         except OSError:
             break
 
+        try:
+            line = data.decode("utf-8", errors="strict")
+            if is_gains_packet(line):
+                gains = parse_gains_packet(line)
+                print(
+                    "\n[GAINS] "
+                    + " ".join(
+                        f"{name}={value:.4f}" for name, value in gains.items()
+                    )
+                )
+                continue
+        except (UnicodeDecodeError, ValueError):
+            continue
+
         now = time.monotonic()
         if now - last_status < STATUS_PERIOD:
             continue
         try:
-            sample = parse_telemetry_packet(data.decode("utf-8", errors="strict"))
-        except (UnicodeDecodeError, ValueError):
+            sample = parse_telemetry_packet(line)
+        except ValueError:
             continue
         faults = ",".join(active_fault_names(sample)) or "-"
         print(
@@ -57,6 +76,7 @@ print("  ap <val>       : Roll+Pitch 공통  |  ar/at/ay <val> : Roll/Pitch/Yaw"
 print(" Control:")
 print("  th <val>  : Base Throttle (ex: th 1150)")
 print("  yaw <0|1> : Yaw 제어 on/off")
+print("  gains     : 현재 12개 PID 게인 읽기")
 print("  start     : ARM & Start Motors")
 print("  stop      : DISARM (Emergency)")
 print("==========================================")

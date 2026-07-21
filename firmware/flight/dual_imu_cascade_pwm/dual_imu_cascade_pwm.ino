@@ -254,6 +254,9 @@ volatile float targetAngleX = 0.0f, targetAngleY = 0.0f, targetAngleZ = 0.0f;
 volatile float angleX = 0.0f, angleY = 0.0f, angleZ = 0.0f; // 추정 각도
 volatile float gyroX  = 0.0f, gyroY  = 0.0f, gyroZ  = 0.0f; // 융합 각속도 (body frame)
 volatile float accX   = 0.0f, accY   = 0.0f, accZ   = 0.0f; // 융합 가속도 (g)
+volatile int   motorOut[4] = {1000,1000,1000,1000};
+volatile float tgtRate[3]  = {0,0,0}; // roll,pitch,yaw dps
+volatile int   pidLoopHz   = 0;
 
 float errorSumRoll = 0.0f, errorSumPitch = 0.0f, errorSumYaw = 0.0f;
 
@@ -431,6 +434,8 @@ void pid_task(void *pv) {
   float targetRateRoll = 0, targetRatePitch = 0, targetRateYaw = 0;
   uint8_t outerCnt = 0;
   uint32_t lastMicros = micros();
+  uint32_t loopCount = 0;
+  uint32_t loopMarkerMs = millis();
   bool wasLocked = true;
 
   inv_imu_sensor_event_t e1 = {}, e2 = {};
@@ -444,6 +449,13 @@ void pid_task(void *pv) {
       wake = afterWake;
     }
     uint32_t nowMs = millis();
+    loopCount++;
+    uint32_t loopElapsedMs = nowMs - loopMarkerMs;
+    if (loopElapsedMs >= 1000) {
+      pidLoopHz = (int)((loopCount * 1000UL) / loopElapsedMs);
+      loopCount = 0;
+      loopMarkerMs = nowMs;
+    }
     uint32_t nowUs = micros();
     float realDt = (nowUs - lastMicros) / 1e6f;
 #if WIFI_LATENCY_DEBUG
@@ -530,6 +542,8 @@ void pid_task(void *pv) {
       targetRateRoll = targetRatePitch = targetRateYaw = 0.0f;
       lpfD_Roll.reset(); lpfD_Pitch.reset(); lpfD_Yaw.reset();
       wasLocked = true;
+      motorOut[0] = 1000; motorOut[1] = 1000; motorOut[2] = 1000; motorOut[3] = 1000;
+      tgtRate[0] = 0.0f; tgtRate[1] = 0.0f; tgtRate[2] = 0.0f;
       stopMotors();
       continue;
     }
@@ -574,6 +588,8 @@ void pid_task(void *pv) {
       lpfD_Roll.reset(); lpfD_Pitch.reset(); lpfD_Yaw.reset();
       outerCnt = 0;
       wasLocked = true;
+      motorOut[0] = 1000; motorOut[1] = 1000; motorOut[2] = 1000; motorOut[3] = 1000;
+      tgtRate[0] = 0.0f; tgtRate[1] = 0.0f; tgtRate[2] = 0.0f;
       stopMotors();
       continue;
     }
@@ -640,11 +656,20 @@ void pid_task(void *pv) {
     }
 
     // 모터 PWM의 단일 writer는 PID task로 유지한다.
-    if (safety_lock) { stopMotors(); wasLocked = true; continue; }
+    if (safety_lock) {
+      motorOut[0] = 1000; motorOut[1] = 1000; motorOut[2] = 1000; motorOut[3] = 1000;
+      tgtRate[0] = 0.0f; tgtRate[1] = 0.0f; tgtRate[2] = 0.0f;
+      stopMotors();
+      wasLocked = true;
+      continue;
+    }
     writeMotor(pinM1, mix.motor[0]);
     writeMotor(pinM2, mix.motor[1]);
     writeMotor(pinM3, mix.motor[2]);
     writeMotor(pinM4, mix.motor[3]);
+    motorOut[0] = mix.motor[0]; motorOut[1] = mix.motor[1];
+    motorOut[2] = mix.motor[2]; motorOut[3] = mix.motor[3];
+    tgtRate[0] = targetRateRoll; tgtRate[1] = targetRatePitch; tgtRate[2] = targetRateYaw;
   }
 }
 
@@ -773,7 +798,7 @@ static void sendTelemetry() {
   if (!connectionEstablished) return;
   bool criticalFault = (active_imus == 0) || fault_attitude || !calibration_ok;
   udp.beginPacket(laptopIP, laptopPort);
-  udp.printf("%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%d,%d,%d,%lu,%lu,%d,%d,%d,%d,%d,%d,%d",
+  udp.printf("%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%d,%d,%d,%lu,%lu,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.2f,%.2f,%.2f",
              angleX, angleY, angleZ,
              gyroX, gyroY, gyroZ,
              accX, accY, accZ,
@@ -782,7 +807,9 @@ static void sendTelemetry() {
              (unsigned long)rcTotalPkts, (unsigned long)rcDroppedPkts,
              (int)fault_imu1, (int)fault_imu2, (int)fault_disagree,
              active_imus, (int)mixer_scaled, (int)fault_attitude,
-             (int)calibration_ok);
+             (int)calibration_ok,
+             motorOut[0], motorOut[1], motorOut[2], motorOut[3], pidLoopHz,
+             tgtRate[0], tgtRate[1], tgtRate[2]);
   udp.endPacket();
 }
 
@@ -869,6 +896,17 @@ void udp_task(void *pv) {
             targetAngleZ = angleZ; // 활성화 순간 setpoint jump 방지
             yaw_enabled = (enabled == 1); // setpoint을 먼저 맞춘 뒤 활성화
             Serial.printf(">>> Yaw %s\n", yaw_enabled ? "ON" : "OFF");
+          }
+        }
+        else if (strcmp(buf, "gains") == 0) {
+          if (connectionEstablished) {
+            udp.beginPacket(laptopIP, laptopPort);
+            udp.printf("GAINS,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f",
+                       Kp_Angle_Roll, Kp_Angle_Pitch, Kp_Angle_Yaw,
+                       Kp_Rate_Roll, Kp_Rate_Pitch, Kp_Rate_Yaw,
+                       Ki_Rate_Roll, Ki_Rate_Pitch, Ki_Rate_Yaw,
+                       Kd_Rate_Roll, Kd_Rate_Pitch, Kd_Rate_Yaw);
+            udp.endPacket();
           }
         }
         else {

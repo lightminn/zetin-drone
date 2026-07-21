@@ -12,6 +12,7 @@ from matplotlib.animation import FuncAnimation
 from telemetry_schema import (
     CSV_FIELDS,
     active_fault_names,
+    is_gains_packet,
     parse_telemetry_packet,
     sample_to_csv_row,
 )
@@ -81,7 +82,10 @@ def update_plot(_frame):
     while True:
         try:
             data, _ = sock.recvfrom(2048)
-            sample = parse_telemetry_packet(data.decode("utf-8", errors="strict"))
+            line = data.decode("utf-8", errors="strict")
+            if is_gains_packet(line):
+                continue
+            sample = parse_telemetry_packet(line)
             latest_sample = sample
 
             now = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]

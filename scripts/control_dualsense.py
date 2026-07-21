@@ -10,6 +10,7 @@ import pygame
 from telemetry_schema import (
     CSV_FIELDS,
     active_fault_names,
+    is_gains_packet,
     parse_telemetry_packet,
     sample_to_csv_row,
 )
@@ -151,7 +152,10 @@ def telemetry_thread():
             continue
 
         try:
-            sample = parse_telemetry_packet(data.decode("utf-8", errors="strict"))
+            line = data.decode("utf-8", errors="strict")
+            if is_gains_packet(line):
+                continue
+            sample = parse_telemetry_packet(line)
         except (UnicodeDecodeError, ValueError):
             continue
 
