@@ -9,11 +9,13 @@
 
 - [`flight/dual_imu_cascade_pwm/`](flight/dual_imu_cascade_pwm/): 듀얼
   ICM42670, 바깥쪽 자세 루프와 안쪽 각속도 루프, 4채널 PWM을 사용하는
-  현행 비행 제어 후보. 실기 비행 안정성이 검증 완료됐다는 뜻은 아니다.
+  **주력** 비행 제어 후보. 실기 비행 안정성이 검증 완료됐다는 뜻은 아니다.
 - [`flight/dual_imu_flix_quat_pwm/`](flight/dual_imu_flix_quat_pwm/):
   [flix](https://github.com/okalachev/flix) 아키텍처 기반 쿼터니언 자세
-  추정·SI 단위 캐스케이드 제어 후보. 같은 하드웨어와 UDP 프로토콜을
-  사용하지만 게인 단위가 다르다. 좌표계·믹서 부호와 벤치 검증 절차는
+  추정·SI 단위 캐스케이드 제어 후보. **보조 실험**이며 개발 우선순위는
+  cascade에 있다. 같은 하드웨어와 UDP 프로토콜을 사용하지만 게인 단위가
+  다르고 yaw 부호가 반대(CCW+)라 DualSense yaw 스틱이 반대로 동작한다.
+  좌표계·믹서 부호와 벤치 검증 절차는
   [해당 README](flight/dual_imu_flix_quat_pwm/README.md) 참조.
 
 핀 배치: 모터 FL/RR/FR/RL = GPIO 4/5/6/7, SPI SCK/MISO/MOSI =

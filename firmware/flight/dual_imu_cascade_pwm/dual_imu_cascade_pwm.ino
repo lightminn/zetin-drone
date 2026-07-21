@@ -657,7 +657,18 @@ static void handleRcCommand(char *buf) {
 static void handleGainCommand(const char *buf) {
   if (strlen(buf) < 3) return;
   float value;
-  if (!parseFloatStrict(buf + 2, value) || value < 0.0f || value > 100.0f) return;
+  if (!parseFloatStrict(buf + 2, value) || value < 0.0f) return;
+
+  // 오타로 인한 과대 게인 방지. 기본값(angle P 6, rate P 0.5) 대비
+  // 3~20배 여유를 두되, "pa 50" 같은 즉시 발산 값은 거부한다.
+  // 거부 시 시리얼에 남겨 튜닝 중 "명령이 안 먹는" 혼란을 줄인다.
+  const bool isAngleGain = buf[0] == 'a' &&
+      (buf[1] == 'p' || buf[1] == 'r' || buf[1] == 't' || buf[1] == 'y');
+  const float cap = isAngleGain ? 20.0f : 10.0f;
+  if (value > cap) {
+    Serial.printf(">>> gain rejected: %.2s %.3f > cap %.0f\n", buf, value, cap);
+    return;
+  }
 
   // Cascade 전용 공통 명령
   if      (strncmp(buf, "rp", 2) == 0) { Kp_Rate_Roll = value; Kp_Rate_Pitch = value; }
