@@ -3,6 +3,7 @@
 #include <ICM42670P.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <esp_task_wdt.h>
 
 // ==========================================================
 // 1. 튜닝 파라미터
@@ -59,6 +60,7 @@ static const float IMU2_SIGN[3] = { IMU2_SIGN_X, IMU2_SIGN_Y, IMU2_SIGN_Z };
 
 // --- 안전/redundancy 임계값 (하드웨어 맞춰 튜닝 필요) ---
 const uint32_t RC_TIMEOUT_MS      = 500;
+const uint32_t PID_WDT_TIMEOUT_MS = 500;     // pid_task 정지 시 강제 재부팅 (1kHz 루프 대비 큰 여유)
 const int32_t  FROZEN_DELTA_RAW   = 1;       // 6축 raw 변화량 합이 이 이하면 정지 의심 (LSB)
 const uint32_t IMU_FROZEN_MS      = 300;     // 그 상태가 이만큼 지속되면 freeze 확정
 const float    GYRO_DISAGREE_DPS  = 15.0f;   // 두 IMU 각속도 차이 임계 (deg/s)
@@ -304,6 +306,12 @@ static inline float compute_alpha(float ax, float ay, float az) {
 // 8. PID 태스크 (Core 1, 1kHz)
 // ==========================================================
 void pid_task(void *pv) {
+  // 모터 정지 수단(stopMotors, RC timeout 검사)이 모두 이 태스크 안에 있으므로,
+  // SPI 행업 등으로 태스크가 블로킹되면 모터가 마지막 PWM으로 고정된다.
+  // 태스크 워치독이 panic 재부팅을 강제하고, 재부팅 후 ESC는 PWM 신호
+  // 소실로 정지하며 setup()의 stopMotors()가 정지 신호를 복원한다.
+  esp_task_wdt_add(NULL);
+
   const TickType_t period = pdMS_TO_TICKS(1);   // vTaskDelayUntil 기반 (busy-wait 제거)
   TickType_t wake = xTaskGetTickCount();
   const float dt = 0.001f;
@@ -323,6 +331,7 @@ void pid_task(void *pv) {
 
   while (true) {
     vTaskDelayUntil(&wake, period);
+    esp_task_wdt_reset();
     TickType_t afterWake = xTaskGetTickCount();
     if ((TickType_t)(afterWake - wake) > period) {
       // 큰 지연 뒤 밀린 tick을 연속 실행하지 않는다(센서 stale read/D항 spike 방지).
@@ -779,6 +788,18 @@ void setup() {
   delay(500);
 
   calibration_ok = calibrate_bias();
+
+  // pid_task 전용 태스크 워치독. idle task는 감시하지 않고, timeout 시
+  // panic 재부팅으로 마지막 PWM 고정 상태에서 벗어난다.
+  esp_task_wdt_config_t wdt_config = {
+    .timeout_ms = PID_WDT_TIMEOUT_MS,
+    .idle_core_mask = 0,
+    .trigger_panic = true,
+  };
+  if (esp_task_wdt_reconfigure(&wdt_config) != ESP_OK &&
+      esp_task_wdt_init(&wdt_config) != ESP_OK) {
+    while (1) { Serial.println("[FAULT] TASK WDT INIT FAIL"); delay(1000); }
+  }
 
   BaseType_t pidTaskOk = xTaskCreatePinnedToCore(pid_task, "PID", 4096, NULL, 2, NULL, 1);
   BaseType_t udpTaskOk = xTaskCreatePinnedToCore(udp_task, "UDP", 4096, NULL, 1, NULL, 0);
