@@ -6,8 +6,8 @@
 
 | 수명주기 | 대상 MCU | 센서 | 모터 프로토콜 | 안전/빌드 메모 | 링크 |
 |---|---|---|---|---|---|
-| 현행 | ESP32-S3 | 듀얼 ICM42670 | PWM | 실험 단계의 비행 제어 후보. 현행 빌드 통과 | [`dual_imu_cascade_pwm`](../firmware/flight/dual_imu_cascade_pwm/) |
-| 현행 | ESP32-S3 | 듀얼 ICM42670 | PWM | flix 기반 쿼터니언 자세제어 후보. 첫 비행 전 벤치 부호 검증 필수 | [`dual_imu_flix_quat_pwm`](../firmware/flight/dual_imu_flix_quat_pwm/) |
+| 현행·**주력** | ESP32-S3 | 듀얼 ICM42670 | PWM | **주력 트랙**(2026-07-22 결정). 첫 호버 목표. Tier1 관측성(모터·루프주파수·목표각속도)·RC 워치독·시퀀스 하드닝 포함, 실기 벤치 검증 | [`dual_imu_cascade_pwm`](../firmware/flight/dual_imu_cascade_pwm/) |
+| **보류** | ESP32-S3 | 듀얼 ICM42670 | PWM | **보류**(2026-07-22, 캐스케이드 집중 결정). flix 기반 쿼터니언 후보 — bench-only, 미해결 이슈(gains 미구현·22필드 텔레메트리·accel 매핑 검증) → README 참조 | [`dual_imu_flix_quat_pwm`](../firmware/flight/dual_imu_flix_quat_pwm/) |
 | 현행 | ESP32-S3 | 없음 | PWM | 프로펠러 제거 상태. 4채널 ESC 벤치 테스트 | [`motor_pwm_bench`](../firmware/diagnostics/motor_pwm_bench/) |
 | 현행 | ESP32-S3 | ICM42670 1개 | 없음 | raw SPI 읽기. 별도 18/19/23/5 핀 배치 사용 | [`icm42670_single_raw`](../firmware/diagnostics/icm42670_single_raw/) |
 | 현행 | ESP32-S3 | 듀얼 ICM42670 | 없음 | 듀얼 IMU raw SPI 읽기 | [`icm42670_dual_raw`](../firmware/diagnostics/icm42670_dual_raw/) |
