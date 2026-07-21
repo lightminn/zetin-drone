@@ -13,6 +13,10 @@
 펌웨어는 SSID `Drone_Tuning`으로 SoftAP를 운영한다. 주소와 포트는
 [`dual_imu_cascade_pwm.ino`](../firmware/flight/dual_imu_cascade_pwm/dual_imu_cascade_pwm.ino)에
 정의돼 있다.
+[`dual_imu_flix_quat_pwm`](../firmware/flight/dual_imu_flix_quat_pwm/)도
+같은 엔드포인트·명령·텔레메트리 스키마를 구현한다. 단, 게인 명령의 단위가
+SI(rad 기반)이고 yaw 각도 부호가 반대(CCW+)이므로
+[해당 README](../firmware/flight/dual_imu_flix_quat_pwm/README.md)를 참조한다.
 
 ## 지상국 → 드론
 
@@ -47,8 +51,9 @@ ar|at|ay <value>      # roll / pitch / yaw
   도착·중복)은 폐기된다.
 - `th`는 기본 ESC 펄스 폭을 마이크로초 단위로 설정한다. 1000~1900으로
   제한되며, min/max 스로틀 창을 기본값 ±150 마진으로 함께 재설정한다.
-- `yaw`는 yaw 제어를 켜거나 끈다. 켜는 순간 현재 추정 yaw 각도를
-  setpoint로 동기화해 점프를 방지한다.
+- `yaw`는 yaw 각도 유지(바깥 루프)를 켜거나 끈다. 꺼져 있어도 yaw 각속도
+  감쇠(안쪽 rate 루프, 목표 0)는 항상 동작한다. 켜는 순간 현재 추정 yaw
+  각도를 setpoint로 동기화해 점프를 방지한다.
 - 게인 값은 0~100 범위의 유한한 수만 수락하며, 범위를 벗어나거나 파싱에
   실패한 명령은 무시된다.
 
@@ -59,7 +64,7 @@ ar|at|ay <value>      # roll / pitch / yaw
 
 ## 드론 → 지상국
 
-텔레메트리는 다음 21개 필드를 정확한 순서로 담은 쉼표 구분 데이터그램이다.
+텔레메트리는 다음 22개 필드를 정확한 순서로 담은 쉼표 구분 데이터그램이다.
 
 ```text
 Roll, Pitch, Yaw,
@@ -69,16 +74,21 @@ Throttle,
 Fault_RC, Fault_Critical,
 RC_Total_Pkts, RC_Dropped_Pkts,
 Fault_IMU1, Fault_IMU2, Fault_Disagree,
-Active_IMUs, Mixer_Scaled, Fault_Attitude, Calibration_OK
+Active_IMUs, Mixer_Scaled, Fault_Attitude, Calibration_OK,
+Armed
 ```
+
+- `Armed`는 펌웨어 safety lock의 반전값이다. `start`가 거부되거나
+  펌웨어가 스스로 시동을 해제한 것을 지상국이 이 필드로 감지한다.
 
 `telemetry_schema.py`는 과거 패킷 길이도 함께 받아들인다.
 
 - 10필드 패킷은 `Throttle`에서 끝난다.
 - 14필드 패킷은 `RC_Dropped_Pkts`에서 끝난다.
+- 21필드 패킷은 `Calibration_OK`에서 끝난다 (`Armed` 도입 이전 펌웨어).
 - 과거 패킷에 없는 값은 정규화된 CSV에서 빈 셀이 된다.
 - `Timestamp`는 드론이 보내지 않는다. 지상 도구가 CSV의 첫 열로 추가하므로
-  현행 패킷은 22개 열이 된다.
+  현행 패킷은 23개 열이 된다.
 
 공유 구현은
 [`telemetry_schema.py`](../scripts/telemetry_schema.py)에 있다.
