@@ -6,8 +6,8 @@ raw IMU 취득은 벤치에서 검증됐지만, 폐쇄루프 자세제어는 아
 ## 여기서 시작
 
 - [프로젝트 개요](docs/project_overview.md)
-- [현행 비행 제어 후보](firmware/flight/dual_imu_cascade_pwm/)
-- [flix 기반 쿼터니언 제어 후보](firmware/flight/dual_imu_flix_quat_pwm/)
+- [주력 비행 제어 후보](firmware/flight/dual_imu_cascade_pwm/)
+- [flix 기반 쿼터니언 제어 후보 (보조 실험)](firmware/flight/dual_imu_flix_quat_pwm/)
 - [펌웨어 및 진단 가이드](firmware/README.md)
 - [PC 제어·텔레메트리 도구](scripts/README.md)
 - [UDP 프로토콜과 텔레메트리 스키마](docs/udp_protocol.md)
