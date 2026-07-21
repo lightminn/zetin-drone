@@ -17,7 +17,9 @@ ZETIN 하드웨어(ESP32-S3 + 듀얼 ICM42670 + PWM ESC)에 이식한 비행 펌
 | 믹서 | 자체 부호 | flix 부호 (아래 참조) |
 
 듀얼 IMU 융합·freeze/불일치 감시·시동 게이트·태스크 워치독·UDP 파서는
-`dual_imu_cascade_pwm`의 검증된 코드를 그대로 가져왔다.
+`dual_imu_cascade_pwm`의 검증된 코드를 그대로 가져왔다. ICM42670 하드웨어
+LPF(자이로 121Hz, 가속도 25Hz), 저역 비교 기반 disagree 감시, 중복 `start`
+무시, `Armed` 필드를 포함한 22필드 텔레메트리도 두 펌웨어가 동일하다.
 `vector.h`, `quaternion.h`, `lpf.h`는 flix 원본 그대로이고 `pid.h`는
 dt 명시·측정값 미분 D항·조건부 적분으로 수정한 버전이다.
 
