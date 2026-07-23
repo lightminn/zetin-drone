@@ -9,7 +9,7 @@
 | 현행·**주력** | ESP32-S3 | 듀얼 ICM42670 | PWM | **주력 트랙**(2026-07-22 결정). 첫 호버 목표. Tier1 관측성(모터·루프주파수·목표각속도)·RC 워치독·시퀀스 하드닝 포함, 실기 벤치 검증 | [`dual_imu_cascade_pwm`](../firmware/flight/dual_imu_cascade_pwm/) |
 | **보류** | ESP32-S3 | 듀얼 ICM42670 | PWM | **보류**(2026-07-22, 캐스케이드 집중 결정). flix 기반 쿼터니언 후보 — bench-only, 미해결 이슈(gains 미구현·22필드 텔레메트리·accel 매핑 검증) → README 참조 | [`dual_imu_flix_quat_pwm`](../firmware/flight/dual_imu_flix_quat_pwm/) |
 | 현행 | ESP32-S3 | 없음 | PWM | 프로펠러 제거 상태. 4채널 ESC 벤치 테스트(4모터 동시 자동 램프) | [`motor_pwm_bench`](../firmware/diagnostics/motor_pwm_bench/) |
-| 현행 | ESP32-S3 | 없음 | PWM | 프로펠러 제거 상태. 시리얼로 한 번에 한 모터만 저속 구동(CAP 1250µs). GPIO→모터 매핑·회전방향 확인. 벤치 절차 Stage A | [`motor_id_single`](../firmware/diagnostics/motor_id_single/) |
+| 현행 | ESP32-S3 | 없음 | PWM | 프로펠러 제거 상태. 시리얼로 한 번에 한 모터만 저속 구동(CAP 1250µs). GPIO→모터 매핑·회전방향 확인. 벤치 절차 Stage A. **비행펌웨어와 동일한 LEDC PWM 사용**(ESP32Servo는 S3에서 채널 오할당→핀 쌍묶임) | [`motor_id_single`](../firmware/diagnostics/motor_id_single/) |
 | 현행 | ESP32-S3 | ICM42670 1개 | 없음 | raw SPI 읽기. 별도 18/19/23/5 핀 배치 사용 | [`icm42670_single_raw`](../firmware/diagnostics/icm42670_single_raw/) |
 | 현행 | ESP32-S3 | 듀얼 ICM42670 | 없음 | 듀얼 IMU raw SPI 읽기 | [`icm42670_dual_raw`](../firmware/diagnostics/icm42670_dual_raw/) |
 | 현행 | ESP32-S3 | 듀얼 ICM42670 | PWM | 프로펠러 제거 상태. 루프 주기·추정기 진단 | [`icm42670_dual_loop_debug`](../firmware/diagnostics/icm42670_dual_loop_debug/) |
