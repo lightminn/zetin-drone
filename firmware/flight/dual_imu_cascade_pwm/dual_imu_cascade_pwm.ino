@@ -60,8 +60,13 @@ volatile float Kp_Angle_Pitch = 6.0f;
 volatile float Kp_Angle_Yaw   = 3.0f;
 
 // [Inner] 각속도 PID: 각속도 오차 -> 모터 파워
-volatile float Kp_Rate_Roll  = 0.50f, Ki_Rate_Roll  = 0.005f, Kd_Rate_Roll  = 0.015f;
-volatile float Kp_Rate_Pitch = 0.50f, Ki_Rate_Pitch = 0.005f, Kd_Rate_Pitch = 0.015f;
+// Ki_Rate_Roll/Pitch: 0.005 -> 0.05 (호스트 SIL 근거, commit e6d0908). 0.005는
+// 일정 CG 치우침 외란에서 10초 후 ±50µs 클램프의 ~1.4%만 써 적분기가 사실상
+// 비활성이었다(파라미터 무관하게 강건한 결론). 0.05는 적분기를 활성화하되
+// 클램프의 <5µs만 쓰는 보수적 시작값이다. SIL의 완전트림 값(0.5)은 실기 지연·
+// 노이즈에서 진동 위험이 있어 일부러 피했고, 최종값은 테더 벤치에서 상향 튜닝한다.
+volatile float Kp_Rate_Roll  = 0.50f, Ki_Rate_Roll  = 0.05f, Kd_Rate_Roll  = 0.015f;
+volatile float Kp_Rate_Pitch = 0.50f, Ki_Rate_Pitch = 0.05f, Kd_Rate_Pitch = 0.015f;
 volatile float Kp_Rate_Yaw   = 1.50f, Ki_Rate_Yaw   = 0.05f,  Kd_Rate_Yaw   = 0.0f;
 
 volatile int  base_throttle = 1000;
