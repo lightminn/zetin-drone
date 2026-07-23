@@ -5,6 +5,7 @@
 - [프로젝트 개요](project_overview.md)
 - [펌웨어 카탈로그](firmware_catalog.md)
 - [UDP 프로토콜](udp_protocol.md)
+- [전원 인가 벤치 절차 (첫 호버 전 안전 관문)](power_on_bench_procedure.md)
 - [저장소 마이그레이션 맵](migration_map.md)
 - [저장소 정리 설계](design/2026-07-13-repository-cleanup-design.md)
 - [저장소 정리 구현 계획](plans/2026-07-13-repository-cleanup.md)
