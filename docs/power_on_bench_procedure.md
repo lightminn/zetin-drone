@@ -12,6 +12,15 @@
 SIL은 믹서·제어법칙의 부호 자기일관성만 확인했다. 이 벤치가 실센서·실모터·
 실프롭을 검증한다. 둘은 상호보완이다.
 
+> **자동화 스크립트(권장).** 부호 검증은 손으로 텔레메트리를 읽는 대신 자립
+> 스크립트로 돌리면 WiFi 전환·시동·판정·복원을 자동 처리한다(사람은 큐에 맞춰
+> 기울이기/비틀기만). 모두 **프롭 OFF·모터 무전원(USB만)**으로 안전하다:
+> - `scripts/bench_sign_test.py` — B-3 roll/pitch 부호 (기울임 4방향)
+> - `scripts/bench_yaw_test.py` — yaw 부호 (CW/CCW 비틀기)
+> - `scripts/motor_serial.py` — Stage A `motor_id_single` USB 시리얼 구동
+>
+> 2026-07-24 실기 검증 결과: roll·pitch·yaw 부호, 모터 매핑·회전방향 모두 정상.
+
 ---
 
 ## 0. 핵심 안전 원칙 (읽고 시작)
