@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <sstream>
 #include <string>
 #include <type_traits>
@@ -48,6 +49,9 @@ inline std::unordered_map<int, bool> ledc_attached_by_pin;
 inline std::unordered_map<int, int> digital_level_by_pin;
 inline std::unordered_map<int, int> pin_mode_by_pin;
 inline bool stop_on_task_delay = false;
+inline std::function<void(uint32_t)> pre_tick_hook = nullptr;
+inline uint32_t tick_index = 0;
+inline uint32_t tick_limit = 0;
 
 struct TaskDelayExit {};
 
@@ -60,6 +64,9 @@ inline void reset() {
   ledc_attached_by_pin.clear();
   digital_level_by_pin.clear();
   pin_mode_by_pin.clear();
+  pre_tick_hook = nullptr;
+  tick_index = 0;
+  tick_limit = 0;
 }
 
 inline void appendFormatted(std::string &destination, const char *format,
@@ -140,7 +147,12 @@ inline TickType_t xTaskGetTickCount() {
   return arduino_fake::tick_count;
 }
 
-inline void vTaskDelayUntil(TickType_t *, TickType_t) {}
+inline void vTaskDelayUntil(TickType_t *, TickType_t) {
+  using namespace arduino_fake;
+  if (pre_tick_hook) pre_tick_hook(tick_index);
+  tick_index++;
+  if (tick_limit && tick_index > tick_limit) throw TaskDelayExit{};
+}
 inline void vTaskDelay(TickType_t) {
   if (arduino_fake::stop_on_task_delay) throw arduino_fake::TaskDelayExit{};
 }
