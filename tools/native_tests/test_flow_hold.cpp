@@ -157,6 +157,18 @@ int main() {
     CHECK(rig.out.state == POSHOLD_ACTIVE);
   });
 
+  runCase("override returns authority fast: +8 deg is gone within 300 ms", [] {
+    // 변화율 제한(10 °/s)이 감쇠를 늦추면 −3° 명령에도 +2.3° 가 0.3 s 뒤까지 남는다.
+    PosRig rig;
+    rig.run(3000, 0.0f, 1.5f);
+    CHECK(rig.out.candidate_pitch_deg > 7.5f);
+    rig.in.pilot_pitch_deg = -3.0f;
+    rig.run(100, 0.0f, 1.5f);
+    CHECK(rig.out.candidate_pitch_deg < 3.0f);     // e^-1 · 8
+    rig.run(200, 0.0f, 1.5f);
+    CHECK(std::fabs(rig.out.candidate_pitch_deg) < 0.5f);
+  });
+
   runCase("yaw rate command, yaw motion or heading change overrides", [] {
     {
       PosRig rig;
@@ -392,6 +404,122 @@ int main() {
     rig.run(1);
     CHECK(rig.out.state == ALTHOLD_ACTIVE);
     checkNear(rig.ah.h_ref, 0.3, 1e-5, "re-captured");
+  });
+
+  runCase("althold: hard zero clears the slewed output, resume ramps from 0", [] {
+    AltRig rig;
+    rig.run(10);
+    rig.in.h_m = 0.2f;
+    rig.run(3000);
+    CHECK(rig.out.applied_us > 30.0f);
+    rig.in.hard_zero = true;
+    rig.run(1);
+    CHECK(rig.out.applied_us == 0.0f && rig.out.candidate_us == 0.0f);
+    rig.in.hard_zero = false;
+    rig.run(1);
+    CHECK(rig.out.applied_us <= 0.31f);             // 계단 없이 0 에서 다시 오른다
+  });
+
+  runCase("althold: recovery after a short dropout does not drop the output", [] {
+    // 재검토 반례: 0.3 m 오차를 3 s 유지 → 거리 무효 315 ms → 복구. 감쇠 우회가 복구에도
+    // 걸리면 한 tick 에 −10 us 가 빠진다.
+    AltRig rig;
+    rig.run(10);
+    rig.in.h_m = 0.3f;
+    rig.run(3000);
+    rig.in.height_valid = false;
+    rig.run(315);
+    CHECK(rig.out.state == ALTHOLD_SUSPENDED);
+    rig.in.height_valid = true;
+    float prev = rig.out.candidate_us, maxStep = 0.0f;
+    for (int i = 0; i < 500; i++) {
+      rig.run(1);
+      maxStep = std::max(maxStep, std::fabs(rig.out.candidate_us - prev));
+      prev = rig.out.candidate_us;
+    }
+    CHECK(rig.out.state == ALTHOLD_ACTIVE);
+    CHECK(maxStep <= 0.31f);
+  });
+
+  runCase("poshold: recovery while the output is still large does not step", [] {
+    PosRig rig;
+    rig.run(3000, 0.0f, 0.5f);
+    CHECK(rig.out.candidate_pitch_deg > 3.0f);
+    rig.run(400, 0.0f, 0.0f, false);             // 잠깐 SUSPENDED
+    CHECK(rig.out.state == POSHOLD_SUSPENDED);
+    float prev = rig.out.candidate_pitch_deg, maxStep = 0.0f;
+    for (int i = 0; i < 500; i++) {
+      rig.in.has_meas = (i % 100 == 0);
+      rig.in.meas_ok = true;
+      rig.in.c_roll = 0.0f;
+      rig.in.c_pitch = 0.0f;
+      rig.in.meas_dt_s = 0.1f;
+      rig.out = posHoldStep(rig.ph, rig.gains, rig.in, kTick);
+      maxStep = std::max(maxStep, std::fabs(rig.out.candidate_pitch_deg - prev));
+      prev = rig.out.candidate_pitch_deg;
+    }
+    CHECK(rig.out.state == POSHOLD_ACTIVE);
+    CHECK(maxStep <= 0.011f);
+  });
+
+  runCase("althold: inhibit during a slewed recovery does not step", [] {
+    AltRig rig;
+    rig.run(10);
+    rig.in.h_m = 0.3f;
+    rig.run(3000);
+    rig.in.height_valid = false;
+    rig.run(315);
+    rig.in.height_valid = true;
+    rig.run(1);                                   // 복구가 천천히 내려가는 중
+    float prev = rig.out.candidate_us, maxStep = 0.0f;
+    rig.in.inhibit = true;                        // 바로 다음 tick 에 base 가 경계 아래로
+    for (int i = 0; i < 300; i++) {
+      rig.run(1);
+      maxStep = std::max(maxStep, std::fabs(rig.out.candidate_us - prev));
+      prev = rig.out.candidate_us;
+    }
+    CHECK(maxStep < 2.0f);                        // τ 0.1 s 감쇠의 첫 tick ≈ 1 % 수준
+  });
+
+  runCase("poshold: override during a slewed recovery does not step", [] {
+    PosRig rig;
+    rig.run(3000, 0.0f, 0.5f);
+    rig.run(400, 0.0f, 0.0f, false);
+    for (int i = 0; i < 101; i++) {               // 복구 측정 하나 + 몇 tick
+      rig.in.has_meas = (i == 0);
+      rig.in.meas_ok = true;
+      rig.in.c_pitch = 0.0f;
+      rig.in.meas_dt_s = 0.1f;
+      rig.out = posHoldStep(rig.ph, rig.gains, rig.in, kTick);
+    }
+    CHECK(rig.out.state == POSHOLD_ACTIVE);
+    float prev = rig.out.candidate_pitch_deg, maxStep = 0.0f;
+    rig.in.has_meas = false;
+    rig.in.pilot_pitch_deg = 3.0f;
+    for (int i = 0; i < 300; i++) {
+      rig.out = posHoldStep(rig.ph, rig.gains, rig.in, kTick);
+      maxStep = std::max(maxStep, std::fabs(rig.out.candidate_pitch_deg - prev));
+      prev = rig.out.candidate_pitch_deg;
+    }
+    CHECK(rig.out.state == POSHOLD_OVERRIDE);
+    CHECK(maxStep < 0.2f);
+    CHECK(std::fabs(rig.out.candidate_pitch_deg) < 0.5f);
+  });
+
+  runCase("althold: range loss during ADJUST still suspends and fades I", [] {
+    // 재검토 반례: I 40 us → 1 us 스로틀 변경(ADJUST) → 거리 10 s 무효에서 40 us 유지.
+    AltRig rig;
+    rig.run(10);
+    rig.in.h_m = 0.35f;                 // 포화되지 않는 오차(pd ≈ 9 us)로 I 를 상한까지
+    rig.run(25000);
+    CHECK(rig.ah.i > 35.0f);
+    rig.in.base_throttle += 1;
+    rig.run(1);
+    CHECK(rig.out.state == ALTHOLD_ADJUST);
+    rig.in.height_valid = false;
+    rig.run(3000);
+    CHECK(rig.out.state == ALTHOLD_SUSPENDED);
+    CHECK(rig.out.applied_us < 0.1f * 40.0f);  // τ 1 s 로 3 s 면 5 % 남짓
   });
 
   runCase("althold: disarmed is dry run; arming resets the target", [] {

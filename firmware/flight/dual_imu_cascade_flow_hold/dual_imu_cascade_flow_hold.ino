@@ -1542,6 +1542,10 @@ void pid_task(void *pv) {
       flowAccelReset(flowAccel);
       flowAccelUsable = false;
       altHoldAppliedPrevUs = 0;
+      // 이 동안 자이로 이력이 쌓이지 않는다. 이력을 지우지 않으면 재무장 뒤 링 보간이
+      // 그 공백을 회전 0 으로 메워 가짜 병진 속도가 된다(코드 재검토 P2).
+      flowGyroReset(flowGyro);
+      flowOdomReset(flowOdomState);
       prevHoldNonZero = false;
       mixer_scaled = false;
       iTermRoll = iTermPitch = iTermYaw = 0.0f;
@@ -1778,6 +1782,7 @@ void pid_task(void *pv) {
     // 리셋하면 그 순간 보정이 계단으로 빠지므로 감쇠로 한다.
     ahIn.inhibit =
         base_throttle < FS_GROUND_CUT_MAX_US + (int)lroundf(altHoldGains.out_max_us);
+    ahIn.hard_zero = base_throttle <= FS_GROUND_CUT_MAX_US;
     ahIn.height_valid = heightFresh;
     ahIn.h_m = heightEst.h_m;
     ahIn.vz_ms = heightEst.vz_ms;

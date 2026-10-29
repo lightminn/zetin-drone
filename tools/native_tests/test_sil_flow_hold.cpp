@@ -650,6 +650,8 @@ int main() {
     fault_imu2 = true;
     run.runTicks(5);
     CHECK(safety_lock);
+    CHECK(flowGyro.count == 0);               // 공백을 보간하지 않도록 이력이 지워졌다
+    CHECK(!flowOdomState.have_prev);
     run.s = State();                          // 다시 세워 놓고 재무장
     run.s.h = 0.5;
     run.disturbance = nullptr;

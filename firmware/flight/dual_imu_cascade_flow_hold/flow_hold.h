@@ -31,6 +31,15 @@ static inline float holdSlew(float prev, float target, float max_step) {
   const float d = target - prev;
   return prev + (d > max_step ? max_step : (d < -max_step ? -max_step : d));
 }
+
+// 감쇠 상태(조종 개입·센서 상실) 전용. 감쇠 목표가 출력보다 작으면 바로 따르고,
+// 크면 출력을 키우지 않는다. 변화율 제한으로 감쇠를 늦추면 조종자 명령과 반대인
+// 보정이 남는다(코드 재검토 P1). 감쇠가 아닌 상태(복구·측정 갱신)에는 쓰지 않는다 —
+// 거기서 목표가 줄어드는 것은 계단이므로 양방향 제한을 건다(재검토 3회차).
+static inline float holdFade(float prev, float target, float max_step) {
+  if (prev * target > 0.0f) return fabsf(target) < fabsf(prev) ? target : prev;
+  return holdSlew(prev, target, max_step);
+}
 static const float POSHOLD_COAST_S = 0.15f;   // 프레임 하나 빠짐까지는 ACTIVE
 // 프레임 하나가 빠지면 유효 측정 간격이 300 ms 가 된다(빠진 구간 + 그 뒤 dt 로
 // 거부되는 구간). 그것까지는 COAST 로 넘기고, 두 개 이상 빠지면 SUSPENDED.
@@ -180,6 +189,10 @@ static inline PosHoldOutput posHoldStep(PosHold &ph, const PosHoldGains &g,
     ph.p_ref[1] = ph.p[1];
     ph.yaw_ref_deg = in.yaw_deg;
     for (int k = 0; k < 2; k++) {
+      // 감쇠는 지금 실제 출력에서 시작한다. 내부 합계가 출력과 다르면(포화, 또는
+      // 복구 중 변화율 제한으로 출력이 뒤처진 상태) 그 차이가 한 번에 빠지거나 상한에
+      // 머문다(코드 재검토 4회차). 그래서 비례항을 출력에 맞춘 뒤 줄인다.
+      ph.prop[k] = ph.out[k] - ph.i[k];
       ph.prop[k] *= decay;
       ph.i[k] *= decay;
     }
@@ -213,6 +226,10 @@ static inline PosHoldOutput posHoldStep(PosHold &ph, const PosHoldGains &g,
   } else if (ph.since_meas_s > POSHOLD_SUSPEND_S) {
     ph.state = POSHOLD_SUSPENDED;
     for (int k = 0; k < 2; k++) {
+      // 감쇠는 지금 실제 출력에서 시작한다. 내부 합계가 출력과 다르면(포화, 또는
+      // 복구 중 변화율 제한으로 출력이 뒤처진 상태) 그 차이가 한 번에 빠지거나 상한에
+      // 머문다(코드 재검토 4회차). 그래서 비례항을 출력에 맞춘 뒤 줄인다.
+      ph.prop[k] = ph.out[k] - ph.i[k];
       ph.prop[k] *= decay;
       ph.i[k] *= decay;
     }
@@ -222,8 +239,12 @@ static inline PosHoldOutput posHoldStep(PosHold &ph, const PosHoldGains &g,
 
   out.state = ph.state;
   const float slew = POSHOLD_SLEW_DEG_S * dt_s;
+  const bool fading =
+      ph.state == POSHOLD_OVERRIDE || ph.state == POSHOLD_SUSPENDED;
   for (int k = 0; k < 2; k++) {
-    ph.out[k] = holdSlew(ph.out[k], holdClamp(ph.prop[k] + ph.i[k], g.out_max_deg), slew);
+    const float target = holdClamp(ph.prop[k] + ph.i[k], g.out_max_deg);
+    ph.out[k] = fading ? holdFade(ph.out[k], target, slew)
+                       : holdSlew(ph.out[k], target, slew);
   }
   out.candidate_roll_deg = ph.out[0];
   out.candidate_pitch_deg = ph.out[1];
@@ -289,6 +310,10 @@ struct AltHoldInput {
   // 참이면 보정을 서서히 0 으로 보내고 쉰다(리셋하지 않는다). 펌웨어는 base 가
   // RC 지상 컷 경계 근처로 내려가면 이것을 켠다.
   bool inhibit = false;
+  // 참이면 그 tick 부터 출력 0, 내부 상태(적분·변화율 제한)도 0. 펌웨어는 base 가
+  // RC 지상 컷 경계 이하일 때 켠다. 내부 출력을 남기면 1 us 만 올려도 그 값이
+  // 한 번에 되살아난다(코드 재검토 P2).
+  bool hard_zero = false;
 };
 
 struct AltHoldOutput {
@@ -339,10 +364,27 @@ static inline AltHoldOutput altHoldStep(AltHold &ah, const AltHoldGains &g,
   }
 
   const float decay = expf(-dt_s / HOLD_DECAY_TAU_S);
+  if (in.hard_zero) {
+    ah.state = ALTHOLD_SUSPENDED;
+    ah.pd = 0.0f;
+    ah.i = 0.0f;
+    ah.out = 0.0f;
+    if (in.height_valid) ah.h_ref = in.h_m;
+    out.state = ah.state;
+    return out;
+  }
   if (in.inhibit) {
     ah.state = ALTHOLD_SUSPENDED;
+    ah.pd = ah.out - ah.i;          // 감쇠는 지금 실제 출력에서 시작한다
     ah.pd *= decay;
     ah.i *= decay;
+  } else if (ah.since_valid_s > ALTHOLD_SUSPEND_S) {
+    // 센서 만료가 ADJUST 보다 먼저다. ADJUST 안에서 거리가 끊기면 종료 조건도 영영
+    // 안 맞아 적분 보정이 무기한 남는다(코드 재검토 5회차).
+    ah.state = ALTHOLD_SUSPENDED;
+    ah.pd = ah.out - ah.i;          // 감쇠는 지금 실제 출력에서 시작한다
+    ah.pd *= decay;
+    ah.i *= expf(-dt_s / ALTHOLD_I_DECAY_TAU_S);
   } else if (ah.state == ALTHOLD_ADJUST) {
     // 진입 순간 출력은 직전 값에서 이어진다(pd 를 0 으로 바꾸지 않고 감쇠).
     // ±1 us 정밀 버튼 한 번이 수십 us 계단이 되면 안 된다(재검토 ②-P2-4).
@@ -351,10 +393,6 @@ static inline AltHoldOutput altHoldStep(AltHold &ah, const AltHoldGains &g,
     if (ah.since_change_s >= ALTHOLD_ADJUST_SETTLE_S && in.height_valid) {
       ah.state = ALTHOLD_ACTIVE;
     }
-  } else if (ah.since_valid_s > ALTHOLD_SUSPEND_S) {
-    ah.state = ALTHOLD_SUSPENDED;
-    ah.pd *= decay;
-    ah.i *= expf(-dt_s / ALTHOLD_I_DECAY_TAU_S);
   } else if (ah.state == ALTHOLD_SUSPENDED && in.height_valid) {
     ah.h_ref = in.h_m;
     ah.state = ALTHOLD_ACTIVE;
@@ -372,8 +410,10 @@ static inline AltHoldOutput altHoldStep(AltHold &ah, const AltHoldGains &g,
   // ACTIVE 인데 높이가 잠깐(≤ 300 ms) 무효면 마지막 출력을 유지한다.
 
   out.state = ah.state;
-  ah.out = holdSlew(ah.out, holdClamp(ah.pd + ah.i, g.out_max_us),
-                    ALTHOLD_SLEW_US_S * dt_s);
+  const float target = holdClamp(ah.pd + ah.i, g.out_max_us);
+  const float step = ALTHOLD_SLEW_US_S * dt_s;
+  ah.out = (ah.state == ALTHOLD_SUSPENDED) ? holdFade(ah.out, target, step)
+                                           : holdSlew(ah.out, target, step);
   out.candidate_us = ah.out;
   if (in.enabled) out.applied_us = out.candidate_us;
   return out;
