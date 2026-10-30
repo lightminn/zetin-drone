@@ -333,6 +333,8 @@ void resetFirmware(const State &s) {
   fs_phase = FS_NONE;
   hover_est = 0.0f; hover_valid = false;
   calibration_ok = true;
+  // 스케치의 트림 기본값은 실기체 값이다. SIL 기체는 트림 없이 수평이다.
+  trim_roll = trim_pitch = 0.0f;
   targetAngleX = targetAngleY = targetAngleZ = 0.0f;
   targetYawRate = 0.0f;
   angleX = (float)(s.phi * kRadToDeg);
@@ -530,6 +532,90 @@ int main() {
     flowOdomCfg = flowOdomDefaultConfig();
     sendUdp("poshold 1");
     CHECK(!poshold_requested);
+  });
+
+  // IMU 보정: 부팅 때는 저장값(NVS > 컴파일 값)을 쓰고, `imucal` 명령 때만 정지 보정한다.
+  runCase("boot loads the compiled IMU calibration when NVS is empty", [] {
+    preferences_fake::reset();
+    for (int k = 0; k < 3; k++) gyro_bias1[k] = gyro_bias2[k] = 99.0f;
+    CHECK(STORED_IMU_CAL_VALID);
+    CHECK(loadImuCalibration());
+    for (int k = 0; k < 3; k++) {
+      CHECK(gyro_bias1[k] == STORED_GYRO_BIAS1[k]);
+      CHECK(gyro_bias2[k] == STORED_GYRO_BIAS2[k]);
+    }
+    CHECK(accel_scale1 == STORED_ACCEL_SCALE1 && accel_scale2 == STORED_ACCEL_SCALE2);
+  });
+
+  runCase("an IMU calibration saved to NVS wins over the compiled one", [] {
+    preferences_fake::reset();
+    const float b1[3] = {0.1f, 0.2f, 0.3f}, b2[3] = {-0.1f, -0.2f, -0.3f};
+    CHECK(saveImuCalibration(b1, b2, 1.01f, 0.99f));
+    CHECK(loadImuCalibration());
+    for (int k = 0; k < 3; k++) {
+      CHECK(gyro_bias1[k] == b1[k]);
+      CHECK(gyro_bias2[k] == b2[k]);
+    }
+    CHECK_MSG(std::fabs(accel_scale1 - 1.01f) < 1e-6f && std::fabs(accel_scale2 - 0.99f) < 1e-6f,
+              "s1=" + fmt(accel_scale1) + " s2=" + fmt(accel_scale2));
+  });
+
+  runCase("an implausible NVS IMU calibration is ignored", [] {
+    preferences_fake::reset();
+    const float b1[3] = {50.0f, 0.0f, 0.0f}, b2[3] = {0.0f, 0.0f, 0.0f};
+    CHECK(saveImuCalibration(b1, b2, 1.0f, 1.0f));
+    CHECK(loadImuCalibration());
+    CHECK(gyro_bias1[0] == STORED_GYRO_BIAS1[0]);
+  });
+
+  runCase("imucal measures a still drone, applies and saves the result", [] {
+    preferences_fake::reset();
+    Run run = hoverRun(0.5, 0.0, 0.0);
+    run.kinematic = [](uint32_t, State &) {};   // 바닥에 정지(1 g, 회전 없음)
+    for (int k = 0; k < 3; k++) gyro_bias1[k] = gyro_bias2[k] = 5.0f;
+    calibration_ok = false;
+    sendUdp("imucal");
+    CHECK(imuCalRunningForHarness());
+    sendUdp("start");
+    CHECK_MSG(safety_lock && !safety_arm_requested, "start must be refused during imucal");
+    run.runTicks(IMU_CAL_SAMPLES + 50);
+    sendUdp("gains");   // Core 0 한 바퀴: 결과 출력·NVS 저장
+    CHECK(!imuCalRunningForHarness());
+    const ImuCalResult r = lastImuCalResultForHarness();
+    CHECK_MSG(r.ok, "reason=" + fmt(r.reason));
+    for (int k = 0; k < 3; k++) {
+      CHECK_MSG(std::fabs(gyro_bias1[k]) < 0.1f, "b1[" + fmt(k) + "]=" + fmt(gyro_bias1[k]));
+      CHECK_MSG(std::fabs(gyro_bias2[k]) < 0.1f, "b2[" + fmt(k) + "]=" + fmt(gyro_bias2[k]));
+    }
+    CHECK(calibration_ok);
+    CHECK(arduino_fake::serial_output.find(">>> IMUCAL OK") != std::string::npos);
+    for (int k = 0; k < 3; k++) gyro_bias1[k] = 7.0f;
+    CHECK(loadImuCalibration());
+    CHECK_MSG(std::fabs(gyro_bias1[0]) < 0.1f, "saved b1[0]=" + fmt(gyro_bias1[0]));
+  });
+
+  runCase("imucal rejects motion and keeps the previous calibration", [] {
+    preferences_fake::reset();
+    Run run = hoverRun(0.5, 0.0, 0.0);
+    run.kinematic = [](uint32_t tick, State &st) {
+      st.p = 0.3 * std::sin(2.0 * kPi * tick / 400.0);   // 약 ±17 dps
+    };
+    for (int k = 0; k < 3; k++) gyro_bias1[k] = gyro_bias2[k] = 0.5f;
+    sendUdp("imucal");
+    run.runTicks(IMU_CAL_SAMPLES + 50);
+    sendUdp("gains");
+    const ImuCalResult r = lastImuCalResultForHarness();
+    CHECK(!r.ok && r.reason == IMUCAL_MOVED);
+    for (int k = 0; k < 3; k++) CHECK(gyro_bias1[k] == 0.5f && gyro_bias2[k] == 0.5f);
+    CHECK(preferences_fake::store.empty());
+    CHECK(arduino_fake::serial_output.find(">>> IMUCAL MOVED") != std::string::npos);
+  });
+
+  runCase("imucal is refused while armed", [] {
+    Run run = hoverRun(0.5, 0.0, 0.0);
+    run.arm(1340);
+    sendUdp("imucal");
+    CHECK(!imuCalRunningForHarness());
   });
 
   runCase("the compiled calibration is applied at reset", [] {

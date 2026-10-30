@@ -14,9 +14,12 @@ yaw 융합에, 3901-L0X 거리·광류 센서는 기록에 사용한다. 전체 
   [전원 인가·벤치 절차](../docs/power_on_bench_procedure.md)를 따른다.
 - [`flight/dual_imu_cascade_flow_hold/`](flight/dual_imu_cascade_flow_hold/):
   주력 스케치의 복사본에 3901-L0X 광류 보정(`flowcal`), 광류 위치 유지(`poshold`),
-  거리계 고도 유지(`althold`)를 더한 **실험 후보**다. 호스트 시험과 SIL 만 통과했고
-  보드 업로드·비행은 하지 않았다. 공유 헤더 6개는 주력과 바이트 동일해야 한다
-  (`tools/test_flow_hold_sketch.py`). 미보정이면 `poshold` 를 거부한다. 텔레메트리는
+  거리계 고도 유지(`althold`)를 더한 **실험 후보**다. 2026-10-30 테더 비행에서 위치
+  유지가 제동 방향으로 동작함을 확인했다(튜닝 진행 중). 공유 헤더 6개는 주력과 바이트
+  동일해야 한다 (`tools/test_flow_hold_sketch.py`). 미보정이면 `poshold` 를 거부한다.
+  주력과 달리 **부팅 때 IMU 정지 보정을 하지 않고 저장값**(NVS, 없으면 컴파일 값)을
+  쓴다. 다시 재려면 바닥에 가만히 둔 채 지상국에서 `imucal` 을 보낸다(2 s, NVS 저장).
+  텔레메트리는
   주력 75필드 뒤에 16필드를 더 보낸다. 설계와 벤치 순서는
   [계획](../docs/superpowers/plans/2026-10-29-flow-position-hold.md).
 - [`flight/dual_imu_flix_quat_pwm/`](flight/dual_imu_flix_quat_pwm/):

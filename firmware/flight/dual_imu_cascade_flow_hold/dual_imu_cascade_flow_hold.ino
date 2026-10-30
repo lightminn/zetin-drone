@@ -11,6 +11,7 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <esp_task_wdt.h>
+#include <Preferences.h>
 #include <errno.h>
 #include <float.h>
 
@@ -91,6 +92,31 @@ static_assert(sizeof(ImuRawHeader) == 20, "ZIMU header must be 20 bytes");
 static_assert(sizeof(ImuRawDatagram) == 1370,
               "maximum ZIMU v2 datagram must be 1370 bytes");
 static_assert(sizeof(ImuCalDatagram) == 60, "ZCAL datagram must be 60 bytes");
+
+// 지상국 `imucal`: 정지 상태 IMU 보정. Core 1 이 자기 1 kHz 샘플로 재고(SPI 를 두 코어가
+// 같이 쓰지 않게), Core 0 이 결과를 NVS 에 저장하고 보고한다.
+enum ImuCalReason : uint8_t {
+  IMUCAL_OK = 0, IMUCAL_MOVED, IMUCAL_ACCEL, IMUCAL_READ, IMUCAL_ARMED
+};
+struct ImuCalResult {
+  bool ok;
+  uint8_t reason;
+  float bias1[3], bias2[3];
+  float scale1, scale2;
+  float max_sd;
+};
+struct ImuCalAccum {
+  bool active;
+  uint32_t n, ticks;
+  double sum1[3], sq1[3], sum2[3], sq2[3];
+  double amag1, amag2;
+};
+// NVS 에 저장하는 형식. magic 이 다르면(빈 NVS·다른 형식) 컴파일 값을 쓴다.
+struct StoredImuCal {
+  uint32_t magic;
+  float bias1[3], bias2[3];
+  float scale1, scale2;
+};
 
 // 광류 위치·고도 유지 (Arduino 프로토타입 생성 때문에 함수보다 앞에 둔다)
 // Core 0 → Core 1: 완성된 프레임 스냅샷. seq 는 로컬 카운터다(MSP 에 송신 seq 없음).
@@ -468,6 +494,20 @@ const float BIAS_MOVEMENT_THRESH = 1.0f;     // 축별 stddev 상한 (deg/s)
 const int   BIAS_CALIB_RETRIES   = 3;
 const float ACCEL_CAL_MIN_G      = 0.8f;     // 이 범위 밖은 센서 이상: 보정 금지
 const float ACCEL_CAL_MAX_G      = 1.2f;
+// 부팅 때는 보정하지 않고 저장값을 쓴다. 지상국 `imucal` 이 정지 상태에서 다시 재서
+// NVS 에 저장하면 그 값이 우선이고, NVS 가 비었을 때 아래 컴파일 값을 쓴다. 둘 다 없으면
+// (VALID=false) 예전처럼 부팅 때 정지 보정을 한다. 이 값은 2026-10-30 이 기체의 부팅
+// 보정이며 두 부팅이 축마다 0.03 dps 안에서 일치했다(ZCAL 로그). IMU·PCB 를 바꾸면
+// `imucal` 로 다시 잰다.
+const bool  STORED_IMU_CAL_VALID = true;
+const float STORED_GYRO_BIAS1[3] = {-0.7474f, 0.1842f, -0.3703f};   // dps
+const float STORED_GYRO_BIAS2[3] = {1.6685f, -0.2698f, 0.9102f};
+const float STORED_ACCEL_SCALE1  = 0.9914f;
+const float STORED_ACCEL_SCALE2  = 0.9992f;
+const int      IMU_CAL_SAMPLES     = BIAS_CALIB_SAMPLES;   // 2 s @ 1 kHz
+const uint32_t IMU_CAL_MAX_TICKS   = 2 * BIAS_CALIB_SAMPLES; // 읽기 실패가 이어지면 포기
+const float    IMU_CAL_MAX_BIAS_DPS = 10.0f;   // NVS 값 타당성. 넘으면 버린다
+const uint32_t IMU_CAL_MAGIC       = 0x5A494331u;   // "ZIC1"
 
 const int OUTER_DIV = 4;                      // outer loop = 1kHz / 4 = 250Hz
 
@@ -739,6 +779,11 @@ enum FlowCalStateId : uint8_t { FLOWCAL_IDLE = 0, FLOWCAL_RUNNING, FLOWCAL_DONE_
 volatile uint8_t flowcal_command = FLOWCAL_CMD_NONE;
 volatile bool flowcal_running = false;     // Core 0 기준 요청 상태(start 거부용)
 volatile bool flowcal_result_pending = false;
+volatile bool imucal_request = false;      // Core 0 → Core 1 (flowRequestMux)
+volatile bool imucal_running = false;      // Core 0 기준(start·flowcal 거부용)
+volatile bool imucal_result_pending = false;
+ImuCalResult imuCalResult = {};
+ImuCalAccum imuCalAcc = {};                // Core 1 소유
 portMUX_TYPE flowRequestMux = portMUX_INITIALIZER_UNLOCKED;
 
 // 순수 조종 명령(트림 제외). RC 파서가 targetAngleX/Y 와 함께 쓴다.
@@ -792,6 +837,11 @@ static inline void resetFlowHoldForHarness() {
   flowcal_command = FLOWCAL_CMD_NONE;
   flowcal_running = false;
   flowcal_result_pending = false;
+  imucal_request = false;
+  imucal_running = false;
+  imucal_result_pending = false;
+  imuCalResult = ImuCalResult();
+  imuCalAcc = ImuCalAccum();
   pilotRollCmd = 0.0f;
   pilotPitchCmd = 0.0f;
   flowOdomCfg = flowOdomDefaultConfig();
@@ -816,6 +866,16 @@ static inline void resetFlowHoldForHarness() {
 
 static inline FlowCalResult lastFlowCalResultForHarness() { return flowCalResult; }
 static inline bool flowCalRunningForHarness() { return flowcal_running; }
+static inline ImuCalResult lastImuCalResultForHarness() { return imuCalResult; }
+static inline bool imuCalRunningForHarness() { return imucal_running; }
+
+static inline bool takeImuCalRequest() {
+  portENTER_CRITICAL(&flowRequestMux);
+  const bool req = imucal_request;
+  imucal_request = false;
+  portEXIT_CRITICAL(&flowRequestMux);
+  return req;
+}
 
 static inline uint8_t takeFlowCalCommand() {
   portENTER_CRITICAL(&flowRequestMux);
@@ -840,9 +900,10 @@ volatile bool hover_valid = false;
 HoverThrottleEstimator hoverTracker = {};
 volatile float targetAngleX = 0.0f, targetAngleY = 0.0f, targetAngleZ = 0.0f;
 // 기체 트림(도). 추정기 0°와 진짜 수평의 차이를 보정한다. 비행별 상태가 아니라
-// 기체 속성이므로 start/stop이 지우지 않는다.
-volatile float trim_roll = 0.0f;
-volatile float trim_pitch = 0.0f;
+// 기체 속성이므로 start/stop이 지우지 않는다. 기본값은 2026-10-30 테더 비행에서
+// 조종자가 맞춘 값(재부팅해도 남도록). 지상국은 접속 때 이 값을 받아 쓴다.
+volatile float trim_roll = -2.2f;
+volatile float trim_pitch = -1.8f;
 volatile float targetYawRate = 0.0f;   // rcr이 준 yaw 각속도 명령 (dps)
 
 volatile float angleX = 0.0f, angleY = 0.0f, angleZ = 0.0f; // 추정 각도
@@ -1312,6 +1373,136 @@ static bool calibrate_bias() {
   return false;
 }
 
+static bool imuCalPlausible(const float b1[3], const float b2[3], float s1, float s2) {
+  for (int k = 0; k < 3; k++) {
+    if (!isfinite(b1[k]) || !isfinite(b2[k])) return false;
+    if (fabsf(b1[k]) > IMU_CAL_MAX_BIAS_DPS || fabsf(b2[k]) > IMU_CAL_MAX_BIAS_DPS) return false;
+  }
+  const float lo = 1.0f / ACCEL_CAL_MAX_G, hi = 1.0f / ACCEL_CAL_MIN_G;
+  return isfinite(s1) && isfinite(s2) && s1 >= lo && s1 <= hi && s2 >= lo && s2 <= hi;
+}
+
+static bool saveImuCalibration(const float b1[3], const float b2[3], float s1, float s2) {
+  StoredImuCal c = {};
+  c.magic = IMU_CAL_MAGIC;
+  for (int k = 0; k < 3; k++) { c.bias1[k] = b1[k]; c.bias2[k] = b2[k]; }
+  c.scale1 = s1;
+  c.scale2 = s2;
+  Preferences prefs;
+  if (!prefs.begin("zimu", false)) return false;
+  const bool ok = prefs.putBytes("cal", &c, sizeof(c)) == sizeof(c);
+  prefs.end();
+  return ok;
+}
+
+// 부팅 때 보정 대신 부른다. NVS(지상국 imucal 결과) > 컴파일 값. 둘 다 없으면 false.
+static bool loadImuCalibration() {
+  StoredImuCal c = {};
+  Preferences prefs;
+  bool fromNvs = false;
+  if (prefs.begin("zimu", true)) {
+    fromNvs = prefs.getBytesLength("cal") == sizeof(c) &&
+              prefs.getBytes("cal", &c, sizeof(c)) == sizeof(c) &&
+              c.magic == IMU_CAL_MAGIC &&
+              imuCalPlausible(c.bias1, c.bias2, c.scale1, c.scale2);
+    prefs.end();
+  }
+  if (!fromNvs) {
+    if (!STORED_IMU_CAL_VALID) return false;
+    for (int k = 0; k < 3; k++) { c.bias1[k] = STORED_GYRO_BIAS1[k]; c.bias2[k] = STORED_GYRO_BIAS2[k]; }
+    c.scale1 = STORED_ACCEL_SCALE1;
+    c.scale2 = STORED_ACCEL_SCALE2;
+  }
+  for (int k = 0; k < 3; k++) { gyro_bias1[k] = c.bias1[k]; gyro_bias2[k] = c.bias2[k]; }
+  accel_scale1 = c.scale1;
+  accel_scale2 = c.scale2;
+  Serial.printf("[CALIB] stored (%s) IMU1 %.3f %.3f %.3f | IMU2 %.3f %.3f %.3f\n",
+                fromNvs ? "NVS" : "compiled",
+                gyro_bias1[0], gyro_bias1[1], gyro_bias1[2],
+                gyro_bias2[0], gyro_bias2[1], gyro_bias2[2]);
+  return true;
+}
+
+static const char *imuCalReasonName(uint8_t r) {
+  switch (r) {
+    case IMUCAL_OK: return "OK";
+    case IMUCAL_MOVED: return "MOVED";
+    case IMUCAL_ACCEL: return "ACCEL";
+    case IMUCAL_READ: return "READ";
+    case IMUCAL_ARMED: return "ARMED";
+    default: return "?";
+  }
+}
+
+// Core 1. 시동 해제 중 매 tick 정지 샘플을 모으고, 다 모이면 판정해 적용한다.
+static void imuCalStep(bool readOk, const inv_imu_sensor_event_t &a,
+                       const inv_imu_sensor_event_t &b) {
+  if (takeImuCalRequest() && safety_lock) {
+    imuCalAcc = ImuCalAccum();
+    imuCalAcc.active = true;
+  }
+  if (!imuCalAcc.active) return;
+  ImuCalResult r = {};
+  bool done = false;
+  if (!safety_lock) {
+    r.reason = IMUCAL_ARMED;
+    done = true;
+  } else {
+    imuCalAcc.ticks++;
+    if (readOk) {
+      for (int k = 0; k < 3; k++) {
+        const double g1 = IMU1_SIGN[k] * a.gyro[k] * GYRO_SCALE;
+        const double g2 = IMU2_SIGN[k] * b.gyro[k] * GYRO_SCALE;
+        imuCalAcc.sum1[k] += g1; imuCalAcc.sq1[k] += g1 * g1;
+        imuCalAcc.sum2[k] += g2; imuCalAcc.sq2[k] += g2 * g2;
+      }
+      const double ax1 = a.accel[0] * ACCEL_SCALE, ay1 = a.accel[1] * ACCEL_SCALE, az1 = a.accel[2] * ACCEL_SCALE;
+      const double ax2 = b.accel[0] * ACCEL_SCALE, ay2 = b.accel[1] * ACCEL_SCALE, az2 = b.accel[2] * ACCEL_SCALE;
+      imuCalAcc.amag1 += sqrt(ax1 * ax1 + ay1 * ay1 + az1 * az1);
+      imuCalAcc.amag2 += sqrt(ax2 * ax2 + ay2 * ay2 + az2 * az2);
+      imuCalAcc.n++;
+    }
+    if (imuCalAcc.n >= (uint32_t)IMU_CAL_SAMPLES) {
+      const double n = imuCalAcc.n;
+      float maxSd = 0.0f;
+      for (int k = 0; k < 3; k++) {
+        const double m1 = imuCalAcc.sum1[k] / n, m2 = imuCalAcc.sum2[k] / n;
+        const double v1 = imuCalAcc.sq1[k] / n - m1 * m1, v2 = imuCalAcc.sq2[k] / n - m2 * m2;
+        maxSd = fmaxf(maxSd, (float)sqrt(v1 > 0 ? v1 : 0));
+        maxSd = fmaxf(maxSd, (float)sqrt(v2 > 0 ? v2 : 0));
+        r.bias1[k] = (float)m1;
+        r.bias2[k] = (float)m2;
+      }
+      const float am1 = (float)(imuCalAcc.amag1 / n), am2 = (float)(imuCalAcc.amag2 / n);
+      r.max_sd = maxSd;
+      if (maxSd > BIAS_MOVEMENT_THRESH) {
+        r.reason = IMUCAL_MOVED;
+      } else if (am1 < ACCEL_CAL_MIN_G || am1 > ACCEL_CAL_MAX_G ||
+                 am2 < ACCEL_CAL_MIN_G || am2 > ACCEL_CAL_MAX_G) {
+        r.reason = IMUCAL_ACCEL;
+      } else {
+        r.ok = true;
+        r.reason = IMUCAL_OK;
+        r.scale1 = 1.0f / am1;
+        r.scale2 = 1.0f / am2;
+        for (int k = 0; k < 3; k++) { gyro_bias1[k] = r.bias1[k]; gyro_bias2[k] = r.bias2[k]; }
+        accel_scale1 = r.scale1;
+        accel_scale2 = r.scale2;
+        calibration_ok = true;
+      }
+      done = true;
+    } else if (imuCalAcc.ticks >= IMU_CAL_MAX_TICKS) {
+      r.reason = IMUCAL_READ;
+      done = true;
+    }
+  }
+  if (done) {
+    imuCalAcc.active = false;
+    imuCalResult = r;
+    imucal_result_pending = true;   // Core 0 가 저장·출력한다
+  }
+}
+
 // ==========================================================
 // 7. 자세 추정용 적응 alpha (가속도 신뢰도 기반)
 // ==========================================================
@@ -1444,6 +1635,7 @@ void pid_task(void *pv) {
     // ---------- 센서 읽기 ----------
     int readStatus1 = IMU1.getDataFromRegisters(e1);
     int readStatus2 = IMU2.getDataFromRegisters(e2);
+    imuCalStep(readStatus1 == 0 && readStatus2 == 0, e1, e2);
 
     // 읽기 오류 시 event가 갱신되지 않으므로 동일 프레임으로 취급되어 freeze로 귀결된다.
     // fault는 비행 중 자동 복구하지 않고 다음 수동 start 때만 재평가/해제한다.
@@ -2518,6 +2710,27 @@ static void reportFlowCalResult() {
   }
 }
 
+// Core 1 이 imucal 을 끝내면 한 번: 성공이면 NVS 에 저장하고 결과를 보고한다.
+static void reportImuCalResult() {
+  if (!imucal_result_pending) return;
+  imucal_result_pending = false;
+  const ImuCalResult r = imuCalResult;
+  bool saved = false;
+  if (r.ok) saved = saveImuCalibration(r.bias1, r.bias2, r.scale1, r.scale2);
+  imucal_running = false;
+  Serial.printf(">>> IMUCAL %s maxSD=%.3f saved=%d\n",
+                imuCalReasonName(r.reason), (double)r.max_sd, (int)saved);
+  if (connectionEstablished) {
+    udp.beginPacket(laptopIP, laptopPort);
+    udp.printf("IMUCAL,%d,%s,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.5f,%.5f,%.3f,%d",
+               (int)r.ok, imuCalReasonName(r.reason),
+               (double)r.bias1[0], (double)r.bias1[1], (double)r.bias1[2],
+               (double)r.bias2[0], (double)r.bias2[1], (double)r.bias2[2],
+               (double)r.scale1, (double)r.scale2, (double)r.max_sd, (int)saved);
+    udp.endPacket();
+  }
+}
+
 // hg <name> <value>: 위치·고도 유지 gain. 시동 해제에서만.
 static void handleHoldGainCommand(char *buf) {
   char *save = nullptr;
@@ -2599,6 +2812,9 @@ void udp_task(void *pv) {
           }
           else if (flowcal_running) {
             Serial.println(">>> START REFUSED (flowcal running)");
+          }
+          else if (imucal_running) {
+            Serial.println(">>> START REFUSED (imucal running)");
           }
           else if (!calibration_ok || overTilt || noUsableImu
                    || imu_disagree_now || mag_calibrating) {
@@ -2797,11 +3013,27 @@ void udp_task(void *pv) {
               }
             } else if (!safety_lock || safety_arm_requested) {
               Serial.println(">>> FlowCal refused (armed)");
+            } else if (imucal_running) {
+              Serial.println(">>> FlowCal refused (imucal running)");
             } else {
               flowcal_running = true;
               requestFlowCalCommand(FLOWCAL_CMD_START);
               Serial.println(">>> FlowCal START - shake roll, then pitch, 40~70cm");
             }
+          }
+        }
+        else if (strcmp(buf, "imucal") == 0) {
+          // 바닥에 가만히 둔 상태에서만. 2 s 동안 Core 1 이 샘플을 모은다.
+          if (!safety_lock || safety_arm_requested) {
+            Serial.println(">>> IMUCAL refused (armed)");
+          } else if (flowcal_running) {
+            Serial.println(">>> IMUCAL refused (flowcal running)");
+          } else if (!imucal_running) {
+            imucal_running = true;
+            portENTER_CRITICAL(&flowRequestMux);
+            imucal_request = true;
+            portEXIT_CRITICAL(&flowRequestMux);
+            Serial.println(">>> IMUCAL START - keep the drone still on the floor (2 s)");
           }
         }
         else if (strncmp(buf, "hg", 2) == 0 && (buf[2] == ' ' || buf[2] == '\t')) {
@@ -2828,6 +3060,7 @@ void udp_task(void *pv) {
     if (mag_enabled || mag_calibrating) sampleMagnetometer(now);
     pollMspSensor(now);
     reportFlowCalResult();
+    reportImuCalResult();
     bool sentImuPacket = false;
     if (now - lastRawCheck >= 10U) {
       lastRawCheck = now;
@@ -2908,7 +3141,8 @@ void setup() {
   }
   delay(500);
 
-  calibration_ok = calibrate_bias();
+  // 부팅 때는 정지 보정을 하지 않는다(지상국 `imucal` 로만). 저장값이 없을 때만 예전처럼.
+  calibration_ok = loadImuCalibration() || calibrate_bias();
   resetFlowHoldForHarness();   // 컴파일 보정값 적용 포함
 
   // pid_task 전용 태스크 워치독. idle task는 감시하지 않고, timeout 시

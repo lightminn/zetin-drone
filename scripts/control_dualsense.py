@@ -923,6 +923,10 @@ def telemetry_thread():
             if is_flowcal_packet(line):
                 print(f"\n[FLOWCAL] {parse_flowcal_packet(line)}")
                 continue
+            if line.startswith("IMUCAL,"):
+                # IMUCAL,ok,reason,b1x,b1y,b1z,b2x,b2y,b2z,scale1,scale2,maxSD,saved
+                print(f"\n[IMUCAL] {line}")
+                continue
             if is_gains_packet(line):
                 gains = parse_gains_packet(line)
                 print(
@@ -1113,6 +1117,7 @@ def controller_thread():
     print(" Control: th <val>, yaw <0|1>, raw on|off, mag on|off, gains, start, stop, resume")
     print("          trim <roll> <pitch>, magc <x> <y> <z>")
     print(" FlowHold: flowcal 1|0, poshold 1|0, althold 1|0, hg <name> <val>")
+    print(" IMU cal:  imucal (disarmed, drone still on the floor, 2 s; saved to NVS)")
     print("======================================")
 
     if pygame.joystick.get_count() == 0:
