@@ -263,9 +263,11 @@ const float FLOW_CAL_MIN_D_M = 0.30f;
 const float FLOW_CAL_MAX_D_M = 1.50f;
 // 컴파일 보정값. `flowcal` 이 출력한 줄을 붙여 넣고 VALID 를 true 로 바꾼다.
 // 미보정이면 poshold 를 거부한다.
-const bool     FLOW_CAL_VALID = false;
-const float    FLOW_CAL_M[2][2] = {{0.0f, 0.0f}, {0.0f, 0.0f}};   // counts/rad
-const uint32_t FLOW_CAL_DELAY_US = 0;
+// 2026-10-30 손 보정(센서를 기체 축에 맞춰 장착, 바닥 약 0.8 m): residual 0.038,
+// cond 1.15, corr -0.05, samples 365. 센서를 다시 달면 다시 보정한다.
+const bool     FLOW_CAL_VALID = true;
+const float    FLOW_CAL_M[2][2] = {{16.14f, 545.93f}, {525.30f, -11.23f}};   // counts/rad
+const uint32_t FLOW_CAL_DELAY_US = 30000;
 
 const int BMM_SDA = 35;
 const int BMM_SCL = 36;

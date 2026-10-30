@@ -10,8 +10,13 @@
 // f = M·g (g = ∫(p,q)dt [rad]) 로 구했으므로 u = M⁻¹f 는 "같은 광류를 만들
 // 자이로 적분"이고, u − g 가 병진 성분만이다. 그것에 d/dt 를 곱한
 // c = (−v_y, v_x) 를 "보정 공간 속도"라 부른다. c 의 부호는 이동을 멈추는
-// 자세 변화의 부호와 같다(기수 들림이 전방 이동을, 좌 기울임이 우측 이동을
-// 줄인다). 유도: docs/superpowers/plans/2026-10-29-flow-position-hold.md §2
+// 자세 변화의 부호와 같다. 유도: docs/superpowers/plans/2026-10-29-flow-position-hold.md §2
+//
+// 위 유도는 FRD(+pitch = 기수 들림)로 썼다. 이 펌웨어의 실기체 규약은
+// +pitch = 기수 숙임(+roll = 우측 날개 내림)이라 실기체에서는
+// c_pitch = −v_전방, c_roll = −v_우측 이다. 제어 규칙(c 와 같은 부호로 목표각에
+// 더함)은 두 부호가 함께 뒤집혀 그대로 제동한다: 전방 이동 → c_pitch < 0 →
+// 목표 pitch 감소 = 기수 들림. 2026-10-30 프롭 없는 손 시험에서 확인했다.
 //
 // MSP 프레임에는 송신 seq 도 측정 구간 시각도 없다. 센서가 100 ms 주기로 보내므로
 // 유실은 도착 간격으로 드러난다. 정상(80~130 ms)이면 그 구간을, 프레임 하나가
@@ -320,7 +325,9 @@ struct FlowAccelEstimator {
   bool valid;
   bool have_prev;
   float prev_c_roll, prev_c_pitch;
-  float ax_ms2, ay_ms2;     // 기체 FRD x(전방)·y(우측)
+  // 보정 공간 c 의 차분. 실기체에서 ax = −a_전방, ay = +a_우측 이고, 이 부호라야
+  // bodyAx(+a_전방/g)·bodyAy(−a_우측/g) 의 동적 성분을 더해서 상쇄한다.
+  float ax_ms2, ay_ms2;
   uint32_t t_us;            // 마지막 유효 갱신 시각
 };
 

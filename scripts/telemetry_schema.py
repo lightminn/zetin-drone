@@ -52,10 +52,12 @@ Fields 76-91 (zero-based indices 75-90) are sent only by
 firmware stop at 75 fields and leave them ``None``. ``Flow_Reject`` is 0 when
 the last flow interval was usable and otherwise a ``FlowReject`` code from
 ``flow_odometry.h``. ``Flow_Vel_R``/``Flow_Vel_P`` and ``Pos_R``/``Pos_P`` are
-in the hold's correction space: ``Flow_Vel_P`` is forward velocity and
-``Flow_Vel_R`` is minus rightward velocity, so a positive value is corrected by
-a positive roll/pitch change. ``Pos_*`` is the body-frame offset from the hold
-reference. ``Hold_Roll_Deg``/``Hold_Pitch_Deg`` and ``AltHold_US`` are the
+in the hold's correction space, where a positive value is corrected by a
+positive roll/pitch change. With this firmware's convention (+pitch = nose
+down, +roll = right wing down) ``Flow_Vel_P`` is minus forward velocity and
+``Flow_Vel_R`` is minus rightward velocity. ``Pos_*`` is the body-frame offset
+from the hold reference in the same space (moving forward makes ``Pos_P``
+negative). ``Hold_Roll_Deg``/``Hold_Pitch_Deg`` and ``AltHold_US`` are the
 *candidate* corrections, computed even while disarmed (dry run); whether they
 are applied follows ``Armed`` and ``Failsafe_Phase``. ``PosHold_State`` is
 0=OFF, 1=ACTIVE, 2=COAST, 3=SUSPENDED, 4=OVERRIDE; ``AltHold_State`` is

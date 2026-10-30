@@ -111,7 +111,9 @@ std::array<double, 3> integrate(State &s, const Params &P, const Disturbance &d)
   const double a = P.arm_proj();
   const double tx = a * (thrust[0] - thrust[1] - thrust[2] + thrust[3]);
   const double ty = a * (-thrust[0] + thrust[1] - thrust[2] + thrust[3]);
-  const double tz = P.yaw_arm() * (thrust[0] + thrust[1] - thrust[2] - thrust[3]);
+  // 믹서는 +yaw 에 M3/M4 를 올린다. 실기체는 그 출력으로 yaw rate 가 감쇠하므로
+  // (비행에서 확인) +yaw 출력이 +r 을 만드는 극성이어야 한다.
+  const double tz = P.yaw_arm() * (-thrust[0] - thrust[1] + thrust[2] + thrust[3]);
   const double T = thrust[0] + thrust[1] + thrust[2] + thrust[3];
 
   const auto R = rotation(s);
@@ -524,8 +526,44 @@ int main() {
 
   runCase("poshold is refused without a calibration", [] {
     Run run = hoverRun(0.5, 0.0, 0.0);
+    // 스케치에 보정 상수가 들어 있어도 미보정 경로를 시험한다.
+    flowOdomCfg = flowOdomDefaultConfig();
     sendUdp("poshold 1");
     CHECK(!poshold_requested);
+  });
+
+  runCase("the compiled calibration is applied at reset", [] {
+    resetFlowHoldForHarness();
+    CHECK(flowOdomCfg.calibrated == FLOW_CAL_VALID);
+  });
+
+  // yaw=0 대칭 조건만 쓰면 yaw 토크 극성이 거꾸로여도 드러나지 않는다(Codex 교차검증).
+  // 실기체는 비행에서 yaw rate 감쇠가 확인됐으므로 SIL 도 감쇠해야 한다.
+  for (double r0_dps : {5.0, -5.0}) {
+    runCase("yaw rate loop damps an initial " + fmt(r0_dps) + " deg/s yaw rate", [r0_dps] {
+      Run run = hoverRun(0.5, 0.0, 0.0);
+      run.arm(1340);
+      run.s.r = r0_dps / kRadToDeg;
+      run.runTicks(1000);
+      CHECK(run.all_finite);
+      CHECK_MSG(std::fabs(run.s.r * kRadToDeg) < 1.0,
+                "r=" + fmt(run.s.r * kRadToDeg) + " deg/s");
+    });
+  }
+
+  runCase("poshold holds through a 20 deg/s yaw kick", [] {
+    Run run = hoverRun(0.5, 0.3, 1.0);
+    setTrueCalibration(0);
+    run.arm(1340);
+    sendUdp("poshold 1");
+    run.runTicks(2000);
+    run.s.r = 20.0 / kRadToDeg;
+    run.runTicks(10000);
+    CHECK(run.all_finite);
+    CHECK_MSG(std::fabs(run.s.r * kRadToDeg) < 1.0, "r=" + fmt(run.s.r * kRadToDeg));
+    CHECK_MSG(run.speed() < 0.05, "speed=" + fmt(run.speed()));
+    CHECK_MSG(run.max_tilt_deg < 10.0, fmt(run.max_tilt_deg));
+    CHECK_MSG(run.s.h > 0.25, "h=" + fmt(run.s.h));
   });
 
   double positiveMaxErr = 0.0;
