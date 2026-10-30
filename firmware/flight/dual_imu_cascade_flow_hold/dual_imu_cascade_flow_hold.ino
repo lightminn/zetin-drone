@@ -229,8 +229,12 @@ volatile float Kp_Angle_Yaw   = 3.0f;
 // 비활성이었다(파라미터 무관하게 강건한 결론). 0.05는 적분기를 활성화하되
 // 클램프의 <5µs만 쓰는 보수적 시작값이다. SIL의 완전트림 값(0.5)은 실기 지연·
 // 노이즈에서 진동 위험이 있어 일부러 피했고, 최종값은 테더 벤치에서 상향 튜닝한다.
-volatile float Kp_Rate_Roll  = 0.50f, Ki_Rate_Roll  = 0.05f, Kd_Rate_Roll  = 0.015f;
-volatile float Kp_Rate_Pitch = 0.50f, Ki_Rate_Pitch = 0.05f, Kd_Rate_Pitch = 0.015f;
+// 위치 유지 스케치는 0.2: 0.05 에서는 1.5° 자세 차이를 메우는 데 약 10 s 가 걸려 위치
+// 유지 보정이 자세로 옮겨지지 않았다. 2026-10-30 테더 비행에서 0.2 는 손 뗀 위치 흔들림을
+// 0.14 → 0.07 m 로 줄였고, 0.3 은 pitch 각속도 흔들림이 4.5 → 6.3 dps 로 늘며 0.11 m 로
+// 나빠졌다.
+volatile float Kp_Rate_Roll  = 0.50f, Ki_Rate_Roll  = 0.20f, Kd_Rate_Roll  = 0.015f;
+volatile float Kp_Rate_Pitch = 0.50f, Ki_Rate_Pitch = 0.20f, Kd_Rate_Pitch = 0.015f;
 volatile float Kp_Rate_Yaw   = 1.50f, Ki_Rate_Yaw   = 0.05f,  Kd_Rate_Yaw   = 0.0f;
 
 volatile int  base_throttle = 1000;

@@ -323,8 +323,8 @@ void resetFirmware(const State &s) {
   connectionEstablished = false;
   Kp_Angle_Roll = 6.0f; Kp_Angle_Pitch = 6.0f; Kp_Angle_Yaw = 3.0f;
   // 펌웨어 출하값과 같게 둔다(자세 SIL 의 0.005 가 아니다).
-  Kp_Rate_Roll = 0.50f; Ki_Rate_Roll = 0.05f; Kd_Rate_Roll = 0.015f;
-  Kp_Rate_Pitch = 0.50f; Ki_Rate_Pitch = 0.05f; Kd_Rate_Pitch = 0.015f;
+  Kp_Rate_Roll = 0.50f; Ki_Rate_Roll = 0.20f; Kd_Rate_Roll = 0.015f;
+  Kp_Rate_Pitch = 0.50f; Ki_Rate_Pitch = 0.20f; Kd_Rate_Pitch = 0.015f;
   Kp_Rate_Yaw = 1.50f; Ki_Rate_Yaw = 0.05f; Kd_Rate_Yaw = 0.0f;
   base_throttle = 1000; min_throttle = 1050; max_throttle = 1300;
   safety_lock = true;

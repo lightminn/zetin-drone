@@ -74,9 +74,10 @@ static inline PosHoldGains posHoldDefaultGains() {
   // 1° 기울기 ≈ 0.171 m/s² → 속도 루프 시정수 1/(0.171·6) ≈ 1.0 s,
   // 위치 루프 2 s. 값은 SIL 격자 탐색(K_v 3~8, K_vi 0.3~2, K_pos 0.3~0.8,
   // LPF 0.1/0.2 s)에서 저항 0.05/0.3 N/(m/s)·1.5 m·30 ms 지연 세 조건의 최악값이
-  // 좋은 영역 가운데를 골랐다(늦은 구간 속도 RMS ≤ 0.027 m/s). 실기 재튜닝 대상.
+  // 좋은 영역 가운데를 골랐다(늦은 구간 속도 RMS ≤ 0.027 m/s). k_pos 는 2026-10-30 테더
+  // 비행에서 0.5 → 0.8 로 올렸다(SIL: 60 ms 추가 지연까지 안정, 100 ms 에서 실패).
   PosHoldGains g;
-  g.k_pos = 0.5f;
+  g.k_pos = 0.8f;
   g.k_v = 6.0f;
   g.k_vi = 1.0f;
   g.v_max_ms = 0.3f;
