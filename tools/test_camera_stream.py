@@ -9,6 +9,11 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from camera_stream import (  # noqa: E402
     MjpegParser,
+    aligned_rows,
+    clock_jumps,
+    drift_report,
+    estimate_offsets,
+    frame_durations,
     StreamFormatError,
     StreamPart,
     boundary_from_content_type,
@@ -172,6 +177,70 @@ class SummarizeTest(unittest.TestCase):
         summary = summarize([])
         self.assertEqual((summary.frames, summary.segments, summary.seq_gaps), (0, 0, 0))
         self.assertEqual(summary.effective_fps, 0.0)
+
+
+class ClockAlignmentTest(unittest.TestCase):
+    def test_offset_is_min_delay(self):
+        rows = [
+            row(0, 0, 0, epoch=100.05, capture=0.0),
+            row(0, 1, 0, epoch=100.30, capture=0.1),
+            row(0, 2, 0, epoch=100.21, capture=0.2),
+        ]
+        self.assertAlmostEqual(estimate_offsets(rows)[0], 100.01, delta=1e-9)
+
+    def test_offsets_per_segment(self):
+        rows = [
+            row(0, 0, 0, epoch=100.0, capture=0.0),
+            row(0, 1, 0, epoch=100.1, capture=0.1),
+            row(1, 0, 0, epoch=200.0, capture=1.0),
+        ]
+        offsets = estimate_offsets(rows)
+        self.assertAlmostEqual(offsets[0], 100.0, delta=1e-9)
+        self.assertAlmostEqual(offsets[1], 199.0, delta=1e-9)
+
+    def test_offsets_skip_rows_without_capture(self):
+        rows = [row(0, 0, 0, epoch=5.0, capture=None), row(0, 1, 0, epoch=10.0, capture=1.0)]
+        self.assertEqual(estimate_offsets(rows), {0: 9.0})
+
+    def test_drift_report_short_segment_none(self):
+        rows = [row(0, i, i * 0.1, epoch=1000 + i * 0.1, capture=i * 0.1) for i in range(1000)]
+        self.assertEqual(drift_report(rows), {0: None})  # 100 s < 2 x 60 s
+
+    def test_drift_report_linear_drift(self):
+        rows = []
+        for i in range(3001):  # 300 s at 10 Hz, offset grows as 1e-4 * t
+            t = i * 0.1
+            rows.append(row(0, i, t, epoch=1000 + t + 1e-4 * t, capture=t))
+        self.assertAlmostEqual(drift_report(rows)[0], 0.024, delta=0.001)
+
+    def test_clock_jump_detected(self):
+        rows = []
+        for i in range(100):
+            mono = 10 + i * 0.1
+            epoch = 1000 + i * 0.1 + (2.0 if i >= 50 else 0.0)
+            rows.append(row(0, i, mono, epoch=epoch, capture=i * 0.1, frame=i))
+        self.assertEqual(clock_jumps(rows), [50])
+
+    def test_frame_durations(self):
+        aligned = [{"segment": "0", "capture_epoch_s": repr(t), "recv_epoch_s": "0"} for t in (0, 0.1, 0.1000001, 0.3)]
+        durations = frame_durations(aligned)
+        for got, want in zip(durations, [0.1, 0.001, 0.2, 0.1]):
+            self.assertAlmostEqual(got, want, delta=1e-6)
+        self.assertEqual(len(durations), 4)
+
+    def test_frame_durations_fall_back_to_recv_time(self):
+        aligned = [
+            {"segment": "0", "capture_epoch_s": "", "recv_epoch_s": "5.0"},
+            {"segment": "0", "capture_epoch_s": "", "recv_epoch_s": "5.25"},
+        ]
+        self.assertEqual(frame_durations(aligned), [0.25, 0.1])
+
+    def test_aligned_rows_adds_columns(self):
+        rows = [row(0, 0, 0, epoch=1_793_000_000.5, capture=2.0)]
+        out = aligned_rows(rows)
+        self.assertAlmostEqual(float(out[0]["capture_epoch_s"]), 1_793_000_000.5, delta=1e-6)
+        self.assertEqual(out[0]["capture_time"], format_recv_time(1_793_000_000.5))
+        self.assertEqual(out[0]["frame"], rows[0]["frame"])
 
 
 if __name__ == "__main__":

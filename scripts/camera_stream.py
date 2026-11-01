@@ -217,3 +217,94 @@ def summarize(rows) -> RecordingSummary:
         longest_gap_s=longest,
         reconnect_gaps_s=tuple(reconnects),
     )
+
+
+def _capture(r):
+    value = r.get("capture_s", "")
+    return None if value in ("", None) else float(value)
+
+
+def estimate_offsets(rows) -> dict[int, float]:
+    """Per segment, ``min(recv_epoch_s - capture_s)``: camera clock -> laptop clock.
+
+    The estimate is the true offset plus the smallest delivery delay in the
+    segment (a few ms on an idle AP). The flight log ``Timestamp`` is also a
+    receive time, so it carries a similar bias.
+    """
+    offsets: dict[int, float] = {}
+    for r in rows:
+        cap = _capture(r)
+        if cap is None:
+            continue
+        seg = int(r["segment"])
+        delay = float(r["recv_epoch_s"]) - cap
+        if seg not in offsets or delay < offsets[seg]:
+            offsets[seg] = delay
+    return offsets
+
+
+def drift_report(rows, window_s: float = 60.0) -> dict[int, float | None]:
+    """Per segment, min offset of the last window minus min offset of the first.
+
+    ``None`` when the segment is shorter than two windows.
+    """
+    report: dict[int, float | None] = {}
+    for group in _segments(rows):
+        seg = int(group[0]["segment"])
+        pts = [(c, float(r["recv_epoch_s"]) - c) for r in group if (c := _capture(r)) is not None]
+        if not pts or pts[-1][0] - pts[0][0] < 2 * window_s:
+            report[seg] = None
+            continue
+        start, end = pts[0][0], pts[-1][0]
+        first = min(o for c, o in pts if c < start + window_s)
+        last = min(o for c, o in pts if c >= end - window_s)
+        report[seg] = last - first
+    return report
+
+
+def clock_jumps(rows, threshold_s: float = 0.5) -> list[int]:
+    """Frames where the laptop wall clock jumped against its monotonic clock."""
+    jumps: list[int] = []
+    prev = None
+    for r in rows:
+        skew = float(r["recv_epoch_s"]) - float(r["recv_monotonic_s"])
+        if prev is not None and abs(skew - prev) > threshold_s:
+            jumps.append(int(r["frame"]))
+        prev = skew
+    return jumps
+
+
+def aligned_rows(rows) -> list[dict]:
+    """Rows plus ``capture_epoch_s`` / ``capture_time`` on the laptop clock."""
+    offsets = estimate_offsets(rows)
+    out: list[dict] = []
+    for r in rows:
+        cap = _capture(r)
+        seg = int(r["segment"])
+        aligned = dict(r)
+        if cap is None or seg not in offsets:
+            aligned["capture_epoch_s"] = ""
+            aligned["capture_time"] = ""
+        else:
+            epoch = cap + offsets[seg]
+            aligned["capture_epoch_s"] = f"{epoch:.6f}"
+            aligned["capture_time"] = format_recv_time(epoch)
+        out.append(aligned)
+    return out
+
+
+def frame_durations(aligned: list[dict], last_s: float = 0.1, min_s: float = 0.001) -> list[float]:
+    """How long each frame stays on screen in an exported video.
+
+    The difference to the next frame's laptop-clock capture time, across
+    segment boundaries too (both sides are on the laptop clock). Rows without a
+    capture time fall back to the receive time.
+    """
+    times = [
+        float(r["capture_epoch_s"]) if r.get("capture_epoch_s", "") != "" else float(r["recv_epoch_s"])
+        for r in aligned
+    ]
+    durations = [max(min_s, b - a) for a, b in zip(times, times[1:])]
+    if times:
+        durations.append(last_s)
+    return durations
