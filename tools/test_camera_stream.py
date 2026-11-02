@@ -41,6 +41,15 @@ def make_stream(parts):
     return b"".join(make_part(*p) if isinstance(p, tuple) else make_part(p) for p in parts)
 
 
+def feed_all(parser, *chunks, tag=None):
+    """Feed chunks, then finish(): the parser holds a part until its trailing boundary or EOF."""
+    out = []
+    for chunk in chunks:
+        out.extend(parser.feed(chunk, tag=tag))
+    remaining, _ = parser.finish()
+    return out + remaining
+
+
 def row(segment, seq, mono, epoch=None, capture=None, frame=0):
     return {
         "frame": str(frame),
@@ -57,7 +66,7 @@ def row(segment, seq, mono, epoch=None, capture=None, frame=0):
 
 class MjpegParserTest(unittest.TestCase):
     def test_single_part(self):
-        parts = MjpegParser(BOUNDARY).feed(make_part(JPEG))
+        parts = feed_all(MjpegParser(BOUNDARY), make_part(JPEG))
         self.assertEqual(parts, [StreamPart(JPEG, 3000.000123, 7)])
 
     def test_split_at_every_byte(self):
@@ -67,12 +76,13 @@ class MjpegParserTest(unittest.TestCase):
         out = []
         for i in range(len(data)):
             out.extend(parser.feed(data[i : i + 1]))
+        out.extend(parser.finish()[0])
         self.assertEqual([p.jpeg for p in out], jpegs)
         self.assertEqual([p.seq for p in out], [0, 1, 2])
 
     def test_payload_containing_boundary(self):
         tricky = b"\xff\xd8" + b"\r\n--zetincamframe\r\n" + b"\xff\xd9"
-        parts = MjpegParser(BOUNDARY).feed(make_stream([tricky, JPEG]))
+        parts = feed_all(MjpegParser(BOUNDARY), make_stream([tricky, JPEG]))
         self.assertEqual([p.jpeg for p in parts], [tricky, JPEG])
 
     def test_missing_content_length_raises(self):
@@ -86,7 +96,7 @@ class MjpegParserTest(unittest.TestCase):
             MjpegParser(BOUNDARY).feed(data)
 
     def test_missing_optional_headers_are_none(self):
-        parts = MjpegParser(BOUNDARY).feed(make_part(JPEG, ts=None, seq=None))
+        parts = feed_all(MjpegParser(BOUNDARY), make_part(JPEG, ts=None, seq=None))
         self.assertEqual(parts, [StreamPart(JPEG, None, None)])
 
     def test_header_names_case_insensitive(self):
@@ -94,10 +104,10 @@ class MjpegParserTest(unittest.TestCase):
             JPEG,
             headers=[b"content-length: %d" % len(JPEG), b"x-timestamp: 1.5", b"x-frame-seq: 3"],
         )
-        self.assertEqual(MjpegParser(BOUNDARY).feed(data), [StreamPart(JPEG, 1.5, 3)])
+        self.assertEqual(feed_all(MjpegParser(BOUNDARY), data), [StreamPart(JPEG, 1.5, 3)])
 
     def test_garbage_before_first_boundary_is_dropped(self):
-        parts = MjpegParser(BOUNDARY).feed(b"HTTP noise" + make_part(JPEG))
+        parts = feed_all(MjpegParser(BOUNDARY), b"HTTP noise" + make_part(JPEG))
         self.assertEqual([p.jpeg for p in parts], [JPEG])
 
     def test_boundary_from_content_type(self):
@@ -115,7 +125,7 @@ class MjpegParserTest(unittest.TestCase):
         cut = data.index(b"\r\n\r\n") + 4 + 10  # headers complete, body still incomplete
         parser = MjpegParser(BOUNDARY)
         self.assertEqual(parser.feed(data[:cut], tag="A"), [])
-        parts = parser.feed(data[cut:], tag="B")
+        parts = parser.feed(data[cut:], tag="B") + parser.finish()[0]
         self.assertEqual(len(parts), 1)
         self.assertEqual(parts[0].tag, "A")
 
@@ -131,11 +141,35 @@ class MjpegParserTest(unittest.TestCase):
         data = make_part(b"\xff\xd8" + b"q" * 50 + b"\xff\xd9")
         parser = MjpegParser(BOUNDARY)
         parser.feed(data[:-10])
-        self.assertTrue(parser.finish())
+        self.assertEqual(parser.finish(), ([], True))
 
         parser = MjpegParser(BOUNDARY)
-        self.assertEqual(len(parser.feed(data)), 1)
-        self.assertFalse(parser.finish())
+        self.assertEqual(parser.feed(data), [])  # held until the next boundary or EOF
+        remaining, truncated = parser.finish()
+        self.assertEqual([p.jpeg for p in remaining], [b"\xff\xd8" + b"q" * 50 + b"\xff\xd9"])
+        self.assertFalse(truncated)
+
+    def test_short_length_rejected_at_every_split(self):
+        body = b"\xff\xd8" + b"z" * 20 + b"\xff\xd9"
+        bad = make_part(body, headers=[b"Content-Length: %d" % (len(body) - 2), b"X-Frame-Seq: 0"])
+        data = bad + make_part(JPEG)
+        for cut in range(1, len(data)):
+            with self.subTest(cut=cut):
+                parser = MjpegParser(BOUNDARY)
+                emitted = []
+                with self.assertRaises(StreamFormatError):
+                    emitted.extend(parser.feed(data[:cut]))
+                    emitted.extend(parser.feed(data[cut:]))
+                self.assertEqual(emitted, [])  # the frame without its EOI is never handed out
+
+    def test_valid_part_survives_following_bad_part(self):
+        body = b"\xff\xd8" + b"z" * 20 + b"\xff\xd9"
+        bad = make_part(body, headers=[b"Content-Length: %d" % (len(body) - 2), b"X-Frame-Seq: 1"])
+        parser = MjpegParser(BOUNDARY)
+        parts = parser.feed(make_part(JPEG) + bad + make_part(JPEG))
+        self.assertEqual([p.jpeg for p in parts], [JPEG])
+        with self.assertRaises(StreamFormatError):
+            parser.feed(b"")
 
 
 class RecvTimeTest(unittest.TestCase):

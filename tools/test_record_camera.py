@@ -14,8 +14,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from camera_stream import INDEX_FIELDS, MjpegParser, format_recv_time  # noqa: E402
+from unittest import mock  # noqa: E402
+
 from record_camera import (  # noqa: E402
     LatestFrame,
+    OutputError,
     OpenedStream,
     RecordState,
     build_arg_parser,
@@ -115,6 +118,21 @@ class RecordChunksTest(unittest.TestCase):
         self.assertEqual(data, jpeg(2))
 
 
+class OutputErrorTest(unittest.TestCase):
+    def test_disk_write_error_is_output_error(self):
+        class FullDisk(io.BytesIO):
+            def write(self, data):
+                raise OSError(28, "No space left on device")
+
+        writer = csv.DictWriter(io.StringIO(), fieldnames=INDEX_FIELDS)
+        with self.assertRaises(OutputError) as ctx:
+            record_chunks(
+                [part(jpeg(1), 0)], MjpegParser(BOUNDARY), FullDisk(), writer, 0, RecordState(), None,
+                threading.Event(),
+            )
+        self.assertNotIsInstance(ctx.exception, OSError)  # must not look like a link drop
+
+
 class LatestFrameTest(unittest.TestCase):
     def test_latest_frame_generation(self):
         latest = LatestFrame()
@@ -145,6 +163,7 @@ class IterResponseTest(unittest.TestCase):
         parts = []
         for chunk in iter_response(resp):
             parts.extend(parser.feed(chunk))
+        parts.extend(parser.finish()[0])
         self.assertEqual([p.jpeg for p in parts], [jpeg(3)])
 
 
@@ -257,6 +276,71 @@ class RunTest(unittest.TestCase):
         self.assertEqual(summary.frames, 1)
         leftover = [t for t in threading.enumerate() if t not in threads_before and t.name.startswith("camera-recorder")]
         self.assertEqual(leftover, [])
+
+
+class SafetyTest(unittest.TestCase):
+    def test_existing_recording_is_not_overwritten(self):
+        stop = threading.Event()
+
+        def opener(url, timeout_s):
+            def chunks():
+                yield part(jpeg(1), 0)
+                stop.set()
+            return opened(chunks())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            (tmp / "camera_2026-11-02_120000.csv").write_text("old index\n")
+            (tmp / "camera_2026-11-02_120000.mjpeg").write_bytes(b"old video")
+            run("http://cam", tmp, preview=False, timeout_s=1.0, retry_s=0, opener=opener, stop=stop,
+                stamp="2026-11-02_120000")
+            self.assertEqual((tmp / "camera_2026-11-02_120000.csv").read_text(), "old index\n")
+            self.assertEqual((tmp / "camera_2026-11-02_120000.mjpeg").read_bytes(), b"old video")
+            self.assertEqual(len(list(tmp.glob("camera_*.mjpeg"))), 2)
+
+    def test_output_error_stops_without_reconnecting(self):
+        calls = []
+
+        def opener(url, timeout_s):
+            calls.append(1)
+            return opened(iter([part(jpeg(1), 0)]))
+
+        with mock.patch("record_camera.record_chunks", side_effect=OutputError("disk full")):
+            with tempfile.TemporaryDirectory() as tmp:
+                with self.assertRaises(RuntimeError):
+                    run("http://cam", Path(tmp), preview=False, timeout_s=1.0, retry_s=0, opener=opener)
+        self.assertEqual(len(calls), 1)
+
+    def test_stop_during_connect_is_not_missed(self):
+        stop = threading.Event()
+        servers = []
+
+        def opener(url, timeout_s):
+            stop.set()          # user quits while we are still connecting ...
+            time.sleep(0.3)     # ... and main's interrupt() runs before the socket exists
+            srv, cli = socket.socketpair()
+            servers.append(srv)
+            srv.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Type: " + CONTENT_TYPE.encode()
+                + b"\r\nTransfer-Encoding: chunked\r\n\r\n"
+            )
+            resp = http.client.HTTPResponse(cli)
+            resp.begin()
+
+            def close():
+                resp.close()
+                cli.close()
+
+            return OpenedStream(BOUNDARY, iter_response(resp), cli, close)
+
+        start = time.monotonic()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                run("http://cam", Path(tmp), preview=False, timeout_s=5.0, retry_s=0, opener=opener, stop=stop)
+        finally:
+            for s in servers:
+                s.close()
+        self.assertLess(time.monotonic() - start, 2.0)
 
 
 class CliTest(unittest.TestCase):

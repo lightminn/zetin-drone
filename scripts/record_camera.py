@@ -41,6 +41,14 @@ LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
 READ_BYTES = 4096
 
 
+class OutputError(Exception):
+    """Writing the recording failed (disk full, permissions, name clash).
+
+    Deliberately not an OSError: those mean "the link dropped, reconnect",
+    while this must stop the recorder and fail the run.
+    """
+
+
 class LatestFrame:
     """Newest received JPEG, handed from the recorder thread to the preview."""
 
@@ -85,10 +93,16 @@ class ActiveConnection:
     def __init__(self):
         self._lock = threading.Lock()
         self._sock: socket.socket | None = None
+        self._interrupted = False
 
     def set(self, sock) -> None:
+        # A socket registered after interrupt() (stop arrived while connecting)
+        # is shut down at once, so its first read cannot block.
         with self._lock:
             self._sock = sock
+            interrupted = self._interrupted
+        if interrupted:
+            _shutdown(sock)
 
     def clear(self) -> None:
         with self._lock:
@@ -96,33 +110,32 @@ class ActiveConnection:
 
     def interrupt(self) -> None:
         with self._lock:
+            self._interrupted = True
             sock = self._sock
-        if sock is None:
-            return
-        try:
-            sock.shutdown(socket.SHUT_RDWR)
-        except OSError:
-            pass
+        _shutdown(sock)
 
 
-def record_chunks(
-    chunks: Iterable[bytes],
-    parser: MjpegParser,
+def _shutdown(sock) -> None:
+    if sock is None:
+        return
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass
+
+
+def write_parts(
+    parts,
     mjpeg_file: BinaryIO,
     writer: csv.DictWriter,
     segment: int,
     state: RecordState,
     latest: LatestFrame | None,
-    stop: threading.Event,
-    now_epoch=time.time,
-    now_mono=time.monotonic,
     csv_file: TextIO | None = None,
 ) -> None:
-    for chunk in chunks:
-        if stop.is_set():
-            return
-        for part in parser.feed(chunk, tag=(now_epoch(), now_mono())):
-            recv_epoch, recv_mono = part.tag
+    for part in parts:
+        recv_epoch, recv_mono = part.tag
+        try:
             offset = mjpeg_file.tell()
             mjpeg_file.write(part.jpeg)
             writer.writerow(
@@ -141,11 +154,39 @@ def record_chunks(
             mjpeg_file.flush()
             if csv_file is not None:
                 csv_file.flush()
-            state.next_frame += 1
-            if latest is not None:
-                latest.set(part.jpeg, recv_mono)
+        except OSError as error:
+            raise OutputError(f"writing the recording failed: {error}") from error
+        state.next_frame += 1
+        if latest is not None:
+            latest.set(part.jpeg, recv_mono)
+
+
+def record_chunks(
+    chunks: Iterable[bytes],
+    parser: MjpegParser,
+    mjpeg_file: BinaryIO,
+    writer: csv.DictWriter,
+    segment: int,
+    state: RecordState,
+    latest: LatestFrame | None,
+    stop: threading.Event,
+    now_epoch=time.time,
+    now_mono=time.monotonic,
+    csv_file: TextIO | None = None,
+) -> None:
+    """Record parts from ``chunks``. At a clean end of stream the last held part
+    is written too; on an exception or stop the caller finishes the parser."""
+    for chunk in chunks:
         if stop.is_set():
             return
+        parts = parser.feed(chunk, tag=(now_epoch(), now_mono()))
+        write_parts(parts, mjpeg_file, writer, segment, state, latest, csv_file)
+        if stop.is_set():
+            return
+    remaining, truncated = parser.finish()
+    write_parts(remaining, mjpeg_file, writer, segment, state, latest, csv_file)
+    if truncated:
+        print("[WARN] dropped an incomplete frame at the end of the connection")
 
 
 def iter_response(resp: http.client.HTTPResponse) -> Iterator[bytes]:
@@ -198,11 +239,28 @@ def record_loop(
     timeout_s: float,
     retry_s: float = 1.0,
     opener=open_stream,
+    errors: list | None = None,
 ) -> None:
-    """Recorder thread body. This thread owns both output files."""
+    """Recorder thread body. This thread owns both output files.
+
+    Output failures end the thread: they are appended to ``errors`` and
+    ``stop`` is set so the main thread exits and reports a failure.
+    """
+    try:
+        _record_loop(url, mjpeg_path, csv_path, latest, stop, active, timeout_s, retry_s, opener)
+    except (OutputError, OSError) as error:
+        message = str(error) if isinstance(error, OutputError) else f"cannot write the recording: {error}"
+        print(f"[ERROR] {message}")
+        if errors is not None:
+            errors.append(message)
+        stop.set()
+
+
+def _record_loop(url, mjpeg_path, csv_path, latest, stop, active, timeout_s, retry_s, opener) -> None:
     state = RecordState()
     segment = -1
-    with mjpeg_path.open("wb") as mjpeg_file, csv_path.open("w", newline="", encoding="utf-8") as csv_file:
+    # "x": never overwrite an existing recording
+    with mjpeg_path.open("xb") as mjpeg_file, csv_path.open("x", newline="", encoding="utf-8") as csv_file:
         writer = csv.DictWriter(csv_file, fieldnames=INDEX_FIELDS)
         writer.writeheader()
         csv_file.flush()
@@ -218,6 +276,8 @@ def record_loop(
             active.set(opened.sock)
             print(f"[CAM] connected (segment {segment})")
             try:
+                if stop.is_set():  # stop arrived while connecting: do not start reading
+                    continue
                 record_chunks(
                     opened.chunks, parser, mjpeg_file, writer, segment, state, latest, stop,
                     csv_file=csv_file,
@@ -227,12 +287,14 @@ def record_loop(
                     print(f"[CAM] stream ended: {error}")
             finally:
                 active.clear()
-                if parser.finish() and not stop.is_set():
-                    print("[WARN] dropped an incomplete frame at the end of the connection")
                 try:
                     opened.close()
                 except OSError:
                     pass
+            remaining, truncated = parser.finish()  # after an exception or stop
+            write_parts(remaining, mjpeg_file, writer, segment, state, latest, csv_file)
+            if truncated and not stop.is_set():
+                print("[WARN] dropped an incomplete frame at the end of the connection")
             if not stop.is_set():
                 stop.wait(retry_s)
 
@@ -279,17 +341,17 @@ def run(
     retry_s: float = 1.0,
     opener=open_stream,
     stop: threading.Event | None = None,
+    stamp: str | None = None,
 ) -> RecordingSummary:
     stop = stop or threading.Event()
     out_dir.mkdir(parents=True, exist_ok=True)
-    stamp = f"{datetime.datetime.now():%Y-%m-%d_%H%M%S}"
-    mjpeg_path = out_dir / f"camera_{stamp}.mjpeg"
-    csv_path = out_dir / f"camera_{stamp}.csv"
+    mjpeg_path, csv_path = _new_recording_paths(out_dir, stamp or f"{datetime.datetime.now():%Y-%m-%d_%H%M%S}")
     latest = LatestFrame() if preview else None
     active = ActiveConnection()
+    errors: list[str] = []
     worker = threading.Thread(
         target=record_loop,
-        args=(url, mjpeg_path, csv_path, latest, stop, active, timeout_s, retry_s, opener),
+        args=(url, mjpeg_path, csv_path, latest, stop, active, timeout_s, retry_s, opener, errors),
         name="camera-recorder",
         daemon=True,
     )
@@ -310,6 +372,8 @@ def run(
     if worker.is_alive():
         print("[ERROR] recorder thread did not exit")
         raise RuntimeError("recorder thread did not exit")
+    if errors:
+        raise RuntimeError(errors[0])
     with csv_path.open(newline="", encoding="utf-8") as f:
         summary = summarize(list(csv.DictReader(f)))
     print(
@@ -323,6 +387,18 @@ def run(
     print(f"[LOG] saved {mjpeg_path}")
     print(f"[LOG] saved {csv_path}")
     return summary
+
+
+def _new_recording_paths(out_dir: Path, stamp: str) -> tuple[Path, Path]:
+    """camera_<stamp>.{mjpeg,csv}, or camera_<stamp>_<n> if either name is taken."""
+    base = f"camera_{stamp}"
+    n = 1
+    while True:
+        name = base if n == 1 else f"{base}_{n}"
+        mjpeg_path, csv_path = out_dir / f"{name}.mjpeg", out_dir / f"{name}.csv"
+        if not mjpeg_path.exists() and not csv_path.exists():
+            return mjpeg_path, csv_path
+        n += 1
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

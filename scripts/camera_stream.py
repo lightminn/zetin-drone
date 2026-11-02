@@ -63,6 +63,11 @@ class MjpegParser:
     so JPEG bytes that happen to contain the boundary are kept intact. The bytes
     right after a body must be the next boundary; anything else means the length
     lied and raises ``StreamFormatError``.
+
+    A part is handed out only once that following boundary has been checked (or
+    at ``finish()``), so a part whose length lied is never returned, wherever
+    the chunks happen to split. Parts already checked in the same ``feed()``
+    call are returned first and the error is raised on the next call.
     """
 
     _SEEK, _HEADERS, _BODY, _AFTER = range(4)
@@ -75,8 +80,13 @@ class MjpegParser:
         self._headers: dict[str, str] = {}
         self._length = 0
         self._tag: object = None
+        self._pending: StreamPart | None = None
+        self._error: StreamFormatError | None = None
 
     def feed(self, data: bytes, tag: object = None) -> list[StreamPart]:
+        if self._error is not None:
+            error, self._error = self._error, None
+            raise error
         self._buf += data
         parts: list[StreamPart] = []
         while True:
@@ -104,30 +114,44 @@ class MjpegParser:
                     return parts
                 jpeg = bytes(self._buf[: self._length])
                 del self._buf[: self._length]
-                parts.append(
-                    StreamPart(
-                        jpeg,
-                        _optional_float(self._headers.get("x-timestamp")),
-                        _optional_int(self._headers.get("x-frame-seq")),
-                        self._tag,
-                    )
+                self._pending = StreamPart(
+                    jpeg,
+                    _optional_float(self._headers.get("x-timestamp")),
+                    _optional_int(self._headers.get("x-frame-seq")),
+                    self._tag,
                 )
                 self._state = self._AFTER
             else:  # _AFTER: the next boundary must follow immediately
                 have = min(len(self._buf), len(self._delim))
                 if bytes(self._buf[:have]) != self._delim[:have]:
-                    raise StreamFormatError("part body is not followed by the boundary (Content-Length mismatch)")
+                    self._pending = None
+                    self._buf.clear()
+                    self._state = self._SEEK
+                    error = StreamFormatError("part body is not followed by the boundary (Content-Length mismatch)")
+                    if parts:
+                        self._error = error
+                        return parts
+                    raise error
                 if have < len(self._delim):
                     return parts
                 del self._buf[: len(self._delim)]
+                parts.append(self._pending)
+                self._pending = None
                 self._state = self._HEADERS
 
-    def finish(self) -> bool:
-        """Call when the connection ends. Returns True if an incomplete part was dropped."""
+    def finish(self) -> tuple[list[StreamPart], bool]:
+        """Call when the connection ends.
+
+        Returns the last complete part still waiting for its trailing boundary,
+        and whether an incomplete part was dropped.
+        """
+        remaining = [self._pending] if self._pending is not None else []
         truncated = self._state == self._BODY or (self._state == self._HEADERS and len(self._buf) > 0)
         self._buf.clear()
         self._state = self._SEEK
-        return truncated
+        self._pending = None
+        self._error = None
+        return remaining, truncated
 
 
 def _parse_headers(block: bytes) -> dict[str, str]:
