@@ -108,6 +108,12 @@ int main() {
     CHECK_EQ(big, (uint32_t)43691);
   });
 
+  runCase("frame_captured_before_stream_start_is_stale", [] {
+    CHECK(frameIsStale(1000000, 61000000));    // sat in the single buffer for a minute
+    CHECK(!frameIsStale(61000001, 61000000));  // captured after the client connected
+    CHECK(!frameIsStale(61000000, 61000000));
+  });
+
   if (g_failures != 0) {
     std::cerr << g_failures << " case(s) failed\n";
     return 1;

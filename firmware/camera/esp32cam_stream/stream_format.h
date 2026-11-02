@@ -29,3 +29,10 @@ inline size_t formatPartHeader(char* buf, size_t cap, uint32_t jpegLen,
                          (unsigned long)jpegLen, sec, usec, (unsigned long)seq);
   return (n > 0 && (size_t)n < cap) ? (size_t)n : 0;
 }
+
+// 스트림 시작보다 먼저 찍힌 프레임인가. PSRAM 없는 폴백(fb_count=1, GRAB_WHEN_EMPTY)은
+// 클라이언트가 붙기 전에 채워진 버퍼를 그대로 내준다 — 보내면 녹화 영상에 그 사이의
+// 대기 시간(수십 초일 수 있다)이 첫 프레임 길이로 끼어든다.
+inline bool frameIsStale(int64_t captureUs, int64_t streamStartUs) {
+  return captureUs < streamStartUs;
+}

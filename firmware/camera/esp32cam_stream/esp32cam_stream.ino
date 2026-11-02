@@ -193,7 +193,8 @@ static esp_err_t streamHandler(httpd_req_t* req) {
   bucket.reset(esp_timer_get_time());
   g_stream_active = true;
   uint32_t consecutive_fails = 0;
-  int64_t next_frame_us = esp_timer_get_time();
+  const int64_t stream_start_us = esp_timer_get_time();
+  int64_t next_frame_us = stream_start_us;
   char boundary[32];
   const size_t boundary_len = formatBoundary(boundary, sizeof(boundary));
   char header[160];
@@ -217,6 +218,10 @@ static esp_err_t streamHandler(httpd_req_t* req) {
     consecutive_fails = 0;
 
     const int64_t capture_us = (int64_t)fb->timestamp.tv_sec * 1000000 + fb->timestamp.tv_usec;
+    if (frameIsStale(capture_us, stream_start_us)) {
+      esp_camera_fb_return(fb);  // 버퍼를 돌려줘야 드라이버가 새 프레임을 채운다
+      continue;
+    }
     const size_t header_len = formatPartHeader(header, sizeof(header), (uint32_t)fb->len, capture_us, g_frames_sent);
     res = sendPaced(req, bucket, boundary, boundary_len);
     if (res == ESP_OK) res = sendPaced(req, bucket, header, header_len);
