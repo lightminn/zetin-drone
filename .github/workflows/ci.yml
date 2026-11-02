@@ -83,3 +83,11 @@ jobs:
               "$sketch"
             echo "::endgroup::"
           done
+      # 카메라 보드는 ESP32(클래식)라 위 esp32s3 루프와 FQBN 이 다르다.
+      # esp32cam 기본값은 Huge APP 파티션 + PSRAM 사용이다.
+      - name: Compile camera sketch
+        run: |
+          arduino-cli compile --warnings all \
+            --fqbn esp32:esp32:esp32cam \
+            --build-path /tmp/zetin-esp32cam_stream \
+            firmware/camera/esp32cam_stream/

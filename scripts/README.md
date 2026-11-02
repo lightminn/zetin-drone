@@ -191,6 +191,41 @@ PID·I 기여의 절댓값 최댓값이 포함된다. 필요한 진단값이 없
 스로틀 간섭 계수 환산은 입력 좌표계가 맞아야 하며 새 보정 후 모터 벤치로
 재검증한다. 로그 좌표계·시간축·결측 해석은 [logs/README.md](../logs/README.md).
 
+## 카메라 녹화
+
+기체의 ESP32-CAM 보드([`firmware/camera`](../firmware/camera/README.md))가 보내는 영상을
+노트북에서 녹화한다. 조종 링크와는 별개이므로 `control_dualsense.py`와 **다른 터미널에서
+동시에** 실행한다. 녹화기는 비행 UDP 포트를 쓰지 않는다.
+
+사전 점검:
+
+- 노트북이 `Drone_Tuning`에 붙어 있어야 한다. 유선 LAN이나 USB 테더링이 192.168.4.0/24로
+  가는 경로를 가로채지 않는지 확인한다. 녹화기는 접속한 로컬 주소가 192.168.4.x가 아니면
+  `[WARN]`을 찍는다.
+- WiFi 절전을 끈다([링크 문서](../docs/ground_station_link.md)의 `powersave` 항목).
+
+```bash
+python scripts/record_camera.py                 # 미리보기 창 + 녹화 (q로 종료)
+python scripts/record_camera.py --no-preview    # 창 없이 녹화 (Ctrl+C로 종료)
+python scripts/camera_to_mp4.py logs/camera_YYYY-MM-DD_HHMMSS.csv
+```
+
+출력:
+
+- `logs/camera_<시각>.mjpeg`: 받은 JPEG를 다시 인코딩하지 않고 그대로 이어 붙인 파일
+- `logs/camera_<시각>.csv`: 프레임마다 한 행. 행에는 다음이 들어간다.
+  - 카메라 일련번호와 캡처 시각
+  - 노트북 수신 시각. 비행 로그와 같은 `HH:MM:SS.mmm` 형식이고, 헤더가 도착한 시각이다.
+  - 접속 구간 번호
+- 후처리 결과(`camera_to_mp4.py`)
+  - `_aligned.csv`: 프레임별 캡처 시각을 노트북 시계로 옮긴 표. 비행 로그 `Timestamp`와 맞춰 보는 데 쓴다.
+  - `.mp4`: 일반 재생용 가변 프레임레이트 영상
+
+카메라와 비행 로그의 시각은 사건 단위(약 ±100 ms) 대조용이다. 오프셋은 구간마다 '최소
+전달 지연'으로 추정하므로, 정밀 운동 분석에 쓸 동기화는 아니다(한계는
+[설계 문서 5.3](../docs/superpowers/specs/2026-11-02-camera-streaming-design.md)).
+종료 요약의 `seq gaps`가 0이 아니면 카메라가 보낸 프레임이 녹화에서 빠진 것이다.
+
 ## 자동 벤치 스크립트의 실행 범위
 
 `bench_sign_test.py`·`bench_yaw_test.py`·`bench_thrust_ramp.py`는 이전 벤치의

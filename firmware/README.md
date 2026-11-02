@@ -53,6 +53,13 @@ GPIO 12/13/11, IMU1/IMU2 CS = GPIO 10/9.
   SPI SCK/MISO/MOSI = GPIO 12/13/11,
   CS = GPIO 10/9.
 
+## 카메라 보드
+
+[`camera/esp32cam_stream/`](camera/esp32cam_stream/)은 기체에 다는 ESP32-CAM
+보드용 **실험** 스케치다. 비행 ESP32의 SoftAP에 고정 IP로 붙어 노트북에 MJPEG를
+내보내고, 비행 펌웨어와는 따로 빌드·업로드한다. 보드 설정과 업로드 방법은
+[카메라 안내](camera/README.md)를 본다.
+
 ## 빌드
 
 Arduino CLI를 사용한다. 의존성과 버전의 기준은
