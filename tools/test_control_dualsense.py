@@ -409,6 +409,8 @@ class ControlDualsenseRegressionTests(unittest.TestCase):
         self.module.telem_hover_valid = True
         self.module.telem_total_pkts = 40
         self.module.telem_dropped_pkts = 3
+        # setUp stamps telemetry with the real clock; restate it on the mocked one
+        self.module.last_telem_time = 9.5
         with mock.patch.object(self.module.time, "monotonic", return_value=10.0):
             self.module.request_resume("test")
 
@@ -439,6 +441,8 @@ class ControlDualsenseRegressionTests(unittest.TestCase):
         self.module.telem_hover_valid = True
         self.module.telem_total_pkts = 40
         self.module.telem_dropped_pkts = 3
+        # setUp stamps telemetry with the real clock; restate it on the mocked one
+        self.module.last_telem_time = 9.5
         with mock.patch.object(self.module.time, "monotonic", return_value=10.0):
             self.module.request_resume("test")
 
@@ -509,6 +513,8 @@ class ControlDualsenseRegressionTests(unittest.TestCase):
         self.module.telem_hover_valid = True
         self.module.telem_total_pkts = 40
         self.module.telem_dropped_pkts = 3
+        # setUp stamps telemetry with the real clock; restate it on the mocked one
+        self.module.last_telem_time = 9.5
         with mock.patch.object(self.module.time, "monotonic", return_value=10.0):
             self.module.request_resume("test")
         self.module.advance_resume_attempt(
@@ -636,6 +642,8 @@ class ControlDualsenseRegressionTests(unittest.TestCase):
         self.module.telem_hover_valid = True
         self.module.telem_total_pkts = 40
         self.module.telem_dropped_pkts = 3
+        # setUp stamps telemetry with the real clock; restate it on the mocked one
+        self.module.last_telem_time = 9.5
         with mock.patch.object(self.module.time, "monotonic", return_value=10.0):
             self.module.request_resume("test")
         self.module.advance_resume_attempt(
@@ -672,6 +680,8 @@ class ControlDualsenseRegressionTests(unittest.TestCase):
         self.module.telem_hover_valid = True
         self.module.telem_total_pkts = 40
         self.module.telem_dropped_pkts = 3
+        # setUp stamps telemetry with the real clock; restate it on the mocked one
+        self.module.last_telem_time = 9.5
         with mock.patch.object(self.module.time, "monotonic", return_value=10.0):
             self.module.request_resume("test")
 
@@ -2238,6 +2248,8 @@ class ControlDualsenseRegressionTests(unittest.TestCase):
         self.module.is_armed = False
         self.module.is_streaming = False
         self._prime_prearm_telemetry()
+        # setUp stamps telemetry with the real clock; restate it on the mocked one
+        self.module.last_telem_time = 9.5
         with mock.patch.object(self.module.time, "monotonic", return_value=10.0):
             self.assertTrue(self.module.arm())
 
@@ -2263,6 +2275,8 @@ class ControlDualsenseRegressionTests(unittest.TestCase):
         self.module.is_armed = False
         self.module.is_streaming = False
         self._prime_prearm_telemetry()
+        # setUp stamps telemetry with the real clock; restate it on the mocked one
+        self.module.last_telem_time = 9.5
         with mock.patch.object(self.module.time, "monotonic", return_value=10.0):
             self.assertTrue(self.module.arm())
 
@@ -2295,6 +2309,8 @@ class ControlDualsenseRegressionTests(unittest.TestCase):
         self.module.is_armed = False
         self.module.is_streaming = False
         self._prime_prearm_telemetry()
+        # setUp stamps telemetry with the real clock; restate it on the mocked one
+        self.module.last_telem_time = 9.5
         with mock.patch.object(self.module.time, "monotonic", return_value=10.0):
             self.assertTrue(self.module.arm())
 
@@ -2340,6 +2356,8 @@ class ControlDualsenseRegressionTests(unittest.TestCase):
         self.module.is_armed = False
         self.module.is_streaming = False
         self._prime_prearm_telemetry()
+        # setUp stamps telemetry with the real clock; restate it on the mocked one
+        self.module.last_telem_time = 9.5
         with mock.patch.object(self.module.time, "monotonic", return_value=10.0):
             self.assertTrue(self.module.arm())
 
@@ -2425,6 +2443,8 @@ class ControlDualsenseRegressionTests(unittest.TestCase):
         self.module.is_armed = False
         self.module.is_streaming = False
         self._prime_prearm_telemetry()
+        # setUp stamps telemetry with the real clock; restate it on the mocked one
+        self.module.last_telem_time = 122.5
 
         def observe_armed_state():
             armed_state_seen_by_clock.append(self.module.is_armed)
