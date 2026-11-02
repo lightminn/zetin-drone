@@ -9,6 +9,7 @@ Standard library only. ``record_camera.py`` (recording) and ``camera_to_mp4.py``
 from __future__ import annotations
 
 import datetime
+import math
 import re
 from dataclasses import dataclass
 
@@ -40,6 +41,11 @@ INDEX_FIELDS = (
     "recv_monotonic_s",
     "recv_time",
 )
+
+# Largest JPEG part accepted. Far above anything the ESP32-CAM frame buffer can
+# hold (UXGA at high quality is a few hundred kB); a larger Content-Length is a
+# corrupt header, and buffering it would swallow every later frame.
+MAX_JPEG_BYTES = 1_000_000
 
 _BOUNDARY_RE = re.compile(r'boundary\s*=\s*"?([^";\s]+)"?', re.IGNORECASE)
 
@@ -169,16 +175,22 @@ def _content_length(headers: dict[str, str]) -> int:
         raise StreamFormatError("part without Content-Length")
     if not raw.isdigit():
         raise StreamFormatError(f"non-numeric Content-Length {raw!r}")
-    return int(raw)
+    length = int(raw)
+    if length > MAX_JPEG_BYTES:
+        raise StreamFormatError(f"Content-Length {length} exceeds {MAX_JPEG_BYTES}")
+    return length
 
 
 def _optional_float(value):
     if value is None or value == "":
         return None
     try:
-        return float(value)
+        number = float(value)
     except ValueError:
         raise StreamFormatError(f"bad X-Timestamp {value!r}") from None
+    if not math.isfinite(number):  # nan / inf would break clock alignment later
+        raise StreamFormatError(f"bad X-Timestamp {value!r}")
+    return number
 
 
 def _optional_int(value):

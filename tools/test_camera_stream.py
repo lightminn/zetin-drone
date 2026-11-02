@@ -171,6 +171,19 @@ class MjpegParserTest(unittest.TestCase):
                 with self.assertRaises(StreamFormatError):
                     feed_all(MjpegParser(BOUNDARY), make_part(JPEG, headers=headers))
 
+    def test_non_finite_timestamp_is_stream_format_error(self):
+        for value in (b"nan", b"inf", b"-inf", b"1e309"):
+            with self.subTest(value=value):
+                headers = [b"Content-Length: %d" % len(JPEG), b"X-Timestamp: " + value]
+                with self.assertRaises(StreamFormatError):
+                    feed_all(MjpegParser(BOUNDARY), make_part(JPEG, headers=headers))
+
+    def test_oversized_content_length_rejected_at_header(self):
+        parser = MjpegParser(BOUNDARY)
+        header_only = b"\r\n--" + BOUNDARY + b"\r\nContent-Length: 1000000000\r\n\r\n"
+        with self.assertRaises(StreamFormatError):
+            parser.feed(header_only)  # rejected before any body is buffered
+
     def test_valid_part_survives_following_bad_part(self):
         body = b"\xff\xd8" + b"z" * 20 + b"\xff\xd9"
         bad = make_part(body, headers=[b"Content-Length: %d" % (len(body) - 2), b"X-Frame-Seq: 1"])
