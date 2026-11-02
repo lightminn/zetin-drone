@@ -45,6 +45,25 @@ class CameraSketchStaticTest(unittest.TestCase):
         self.assertIn(200, hosts, "camera static IP 192.168.4.200 not found")
         self.assertNotIn(200, DHCP_POOL)
 
+    def test_full_tx_power_by_default(self):
+        # 11 dBm measured 0.7-1.2 fps with 17-640 ms ping on the bench
+        # (2026-11-02); 19.5 dBm gave 7.9 fps and 18-91 ms.
+        self.assertIn("CAM_WIFI_TX_POWER = WIFI_POWER_19_5dBm;", SKETCH.read_text(encoding="utf-8"))
+
+    def test_vga_quality_10_by_default(self):
+        # user-chosen default (2026-11-02); bench: VGA q10 = 15-22 kB, 2.8-7.7 fps; SVGA q10 fell to 1.3 fps
+        # because a 28 kB frame needs ~5 round trips through the 5744 B TCP send buffer
+        text = SKETCH.read_text(encoding="utf-8")
+        self.assertIn("const framesize_t FRAME_SIZE = FRAMESIZE_VGA;", text)
+        self.assertIn("const int JPEG_QUALITY = 10;", text)
+
+    def test_mirror_and_flip_are_applied_from_constants(self):
+        text = SKETCH.read_text(encoding="utf-8")
+        self.assertIn("const bool CAM_HMIRROR = true;", text)  # OV3660 board: image came out mirrored
+        self.assertIn("const bool CAM_VFLIP = false;", text)
+        self.assertRegex(text, r"set_hmirror\(\s*s\s*,\s*CAM_HMIRROR")
+        self.assertRegex(text, r"set_vflip\(\s*s\s*,\s*CAM_VFLIP")
+
     def test_ci_compiles_camera_with_esp32cam_fqbn(self):
         text = CI.read_text(encoding="utf-8")
         self.assertIn("esp32:esp32:esp32cam", text)

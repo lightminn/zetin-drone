@@ -6,7 +6,8 @@ MJPEG를 보낸다. 노트북에서는 [`scripts/record_camera.py`](../../script
 받아 녹화한다. 설계는
 [카메라 스트리밍 설계](../../docs/superpowers/specs/2026-11-02-camera-streaming-design.md)에 있다.
 
-**실험 단계다.** 컴파일만 검증했고 실기 시험은 아직 하지 않았다.
+**실험 단계다.** 2026-11-02 벤치에서 OV3660 보드(PSRAM 있음)가 USB 전원으로 부팅·접속·스트림까지
+동작했다(VGA·품질 10, 장면에 따라 2.8–7.7 fps·최장 공백 3 s, 일련번호 틈 0). BEC 전원과 비행 링크 영향(벤치 2)은 아직 시험하지 않았다.
 
 ## 보드 설정
 
@@ -53,11 +54,12 @@ arduino-cli upload  --fqbn esp32:esp32:esp32cam -p /dev/ttyUSB0 firmware/camera/
 
 | 상수 | 기본값 | 바꾸는 때 |
 |---|---|---|
-| `FRAME_SIZE` | HVGA 480×320 | 링크 비교를 통과한 뒤에만 올린다 |
-| `JPEG_QUALITY` | 12 | 값이 작을수록 고화질이고 프레임이 커진다 |
+| `FRAME_SIZE` | VGA 640×480 | SVGA는 TCP 송신 버퍼 한계로 1.3 fps까지 떨어졌다. 올리지 않는다 |
+| `JPEG_QUALITY` | 10 | 값이 작을수록 고화질이고 프레임이 커진다(VGA·10 ≈ 15–22 kB). 끊김이 잦으면 12–14로 올린다 |
 | `FPS_CAP` | 10 | |
 | `BYTE_RATE_CAP` | 187,500 B/s (1.5 Mbps) | 조종 링크 보호용 평균 상한 |
-| `CAM_WIFI_TX_POWER` | 11 dBm | RSSI가 나쁠 때만 올린다 |
+| `CAM_WIFI_TX_POWER` | 19.5 dBm | 11 dBm에서는 지연이 커져 1 fps 안팎으로 떨어졌다(스케치 주석) |
+| `CAM_HMIRROR`, `CAM_VFLIP` | `true`, `false` | 기체에 단 방향에 맞춰 바꾼다 |
 
 ## 시리얼 로그 (115200)
 

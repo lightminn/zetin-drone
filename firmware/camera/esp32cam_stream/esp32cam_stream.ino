@@ -26,16 +26,25 @@ const char* WIFI_PASS = "12345678";
 const IPAddress CAM_IP = IPAddress(192, 168, 4, 200);
 const IPAddress CAM_GATEWAY = IPAddress(192, 168, 4, 1);
 const IPAddress CAM_SUBNET = IPAddress(255, 255, 255, 0);
-// AP 와 수 cm 거리라 최대 출력이 필요 없다. 낮추면 송신 피크 전류와 근접 간섭이 준다.
-// 벤치에서 RSSI 가 나쁘면 올린다.
-const wifi_power_t CAM_WIFI_TX_POWER = WIFI_POWER_11dBm;
+// 최대 출력. 11 dBm 으로 낮췄더니 벤치(2026-11-02, OV3660 보드)에서 카메라 구간 ping 이
+// 17–640 ms 로 튀고 녹화가 0.7–1.2 fps 에 그쳤다 — TCP 송신 버퍼(5744 B)가 프레임 하나라
+// 왕복 지연이 곧 fps 상한이 된다. 19.5 dBm 에서는 18–91 ms, 7.9 fps.
+// 송신 피크 전류가 커지므로 BEC 로 옮기면 reset_reason 이 brownout 인지 확인한다.
+const wifi_power_t CAM_WIFI_TX_POWER = WIFI_POWER_19_5dBm;
 const uint32_t WIFI_CHECK_MS = 2000;
 const uint32_t WIFI_RESTART_AFTER_MS = 10000;  // 이만큼 끊겨 있으면 begin 부터 다시
 
 // ===== 영상 =====
-const framesize_t FRAME_SIZE = FRAMESIZE_HVGA;          // 480x320
+// 센서 방향. OV3660 보드에서 좌우가 뒤집혀 나와 기본으로 미러링한다. 기체에 단 방향에
+// 맞춰 바꾼다.
+const bool CAM_HMIRROR = true;
+const bool CAM_VFLIP = false;
+// VGA·품질 10: 벤치(2026-11-02)에서 장면에 따라 15–22 kB/프레임, 2.8–7.7 fps, 최장 공백 3 s.
+// 처리량은 5744 B TCP 송신 버퍼 ÷ 왕복 지연으로 막혀 약 85–115 kB/s 다. SVGA 는 28 kB 프레임이
+// 왕복 5번 가까이 걸려 1.3 fps 로 무너졌다. 끊김이 문제면 JPEG_QUALITY 를 올려(12–14) 프레임을 줄인다.
+const framesize_t FRAME_SIZE = FRAMESIZE_VGA;           // 640x480
 const framesize_t FRAME_SIZE_NO_PSRAM = FRAMESIZE_QVGA;  // 320x240
-const int JPEG_QUALITY = 12;
+const int JPEG_QUALITY = 10;
 const uint32_t FPS_CAP = 10;
 const int64_t FRAME_INTERVAL_US = 1000000 / FPS_CAP;
 // 1.5 Mbps. fps 상한만으로는 JPEG 크기 변동을 못 막아서 바이트율도 묶는다.
@@ -148,7 +157,11 @@ static bool initCamera() {
     return false;
   }
   sensor_t* s = esp_camera_sensor_get();
-  if (s != nullptr) g_sensor_pid = s->id.PID;
+  if (s != nullptr) {
+    g_sensor_pid = s->id.PID;
+    s->set_hmirror(s, CAM_HMIRROR ? 1 : 0);
+    s->set_vflip(s, CAM_VFLIP ? 1 : 0);
+  }
   return true;
 }
 

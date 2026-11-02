@@ -26,7 +26,7 @@ ESP32-S3로, 카메라 스케치를 ESP32-CAM(`esp32:esp32:esp32cam`)으로 컴�
 | 현행 | ESP32-S3 | 듀얼 ICM42670 | 없음 | 듀얼 IMU raw SPI 읽기 | [`icm42670_dual_raw`](../firmware/diagnostics/icm42670_dual_raw/) |
 | 현행 | ESP32-S3 | 듀얼 ICM42670 | PWM 최저값 고정 | 구형 추정기 루프 진단. PID·믹서 없음, 전 모터 1000µs. 별도 14필드이며 `receive_dual_imu_debug.py`와 사용 | [`icm42670_dual_loop_debug`](../firmware/diagnostics/icm42670_dual_loop_debug/) |
 | 현행 | ESP32-S3 | 듀얼 ICM42670 | 없음 | PCB v1.5.2 센서 브링업 진단 | [`board_v1_5_2_dual_imu`](../firmware/diagnostics/board_v1_5_2_dual_imu/) |
-| 실험 | ESP32 (ESP32-CAM, AI-Thinker 핀맵) | 카메라(OV2640 가정) | 없음 | HTTP MJPEG :81, 상태 :80, 고정 IP 192.168.4.200. 비행 링크 UDP 포트 미사용. CI는 esp32cam FQBN으로 별도 컴파일. 실기 미검증 | [`esp32cam_stream`](../firmware/camera/esp32cam_stream/) |
+| 실험 | ESP32 (ESP32-CAM, AI-Thinker 핀맵) | 카메라 OV3660 | 없음 | HTTP MJPEG :81, 상태 :80, 고정 IP 192.168.4.200. 비행 링크 UDP 포트 미사용. CI는 esp32cam FQBN으로 별도 컴파일. USB 전원 벤치 스트림 확인(2026-11-02), BEC·링크 비교 미시험 | [`esp32cam_stream`](../firmware/camera/esp32cam_stream/) |
 | 보관 | ESP32-S3 | ICM42670 1개 | PWM | 대체된 단일 IMU PID. 미지원 | [`single_imu_pid_pwm`](../firmware/archive/legacy_flight/single_imu_pid_pwm/) |
 | 보관 | ESP32-S3 | 듀얼 ICM42670 | PWM | 대체된 듀얼 IMU PID. 단순 평균·시작 시 bias 보정이며 과거 계획의 개별 IMU 폴백·런타임 bias 갱신은 없음. 미지원 | [`dual_imu_pid_pwm`](../firmware/archive/legacy_flight/dual_imu_pid_pwm/) |
 | 보관 | ESP32-S3 | ICM42670 1개 | PWM | 대체된 캐스케이드 실험. 미지원 | [`single_imu_cascade_pwm`](../firmware/archive/legacy_flight/single_imu_cascade_pwm/) |
