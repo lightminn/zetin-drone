@@ -175,13 +175,19 @@ def _content_length(headers: dict[str, str]) -> int:
 def _optional_float(value):
     if value is None or value == "":
         return None
-    return float(value)
+    try:
+        return float(value)
+    except ValueError:
+        raise StreamFormatError(f"bad X-Timestamp {value!r}") from None
 
 
 def _optional_int(value):
     if value is None or value == "":
         return None
-    return int(value)
+    try:
+        return int(value)
+    except ValueError:
+        raise StreamFormatError(f"bad X-Frame-Seq {value!r}") from None
 
 
 @dataclass(frozen=True)

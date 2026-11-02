@@ -162,6 +162,15 @@ class MjpegParserTest(unittest.TestCase):
                     emitted.extend(parser.feed(data[cut:]))
                 self.assertEqual(emitted, [])  # the frame without its EOI is never handed out
 
+    def test_bad_numeric_header_is_stream_format_error(self):
+        for headers in (
+            [b"Content-Length: %d" % len(JPEG), b"X-Frame-Seq: bad"],
+            [b"Content-Length: %d" % len(JPEG), b"X-Timestamp: bad"],
+        ):
+            with self.subTest(headers=headers):
+                with self.assertRaises(StreamFormatError):
+                    feed_all(MjpegParser(BOUNDARY), make_part(JPEG, headers=headers))
+
     def test_valid_part_survives_following_bad_part(self):
         body = b"\xff\xd8" + b"z" * 20 + b"\xff\xd9"
         bad = make_part(body, headers=[b"Content-Length: %d" % (len(body) - 2), b"X-Frame-Seq: 1"])

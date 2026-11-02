@@ -250,10 +250,16 @@ def record_loop(
         _record_loop(url, mjpeg_path, csv_path, latest, stop, active, timeout_s, retry_s, opener)
     except (OutputError, OSError) as error:
         message = str(error) if isinstance(error, OutputError) else f"cannot write the recording: {error}"
-        print(f"[ERROR] {message}")
-        if errors is not None:
-            errors.append(message)
-        stop.set()
+        _fail(message, errors, stop)
+    except Exception as error:  # a bug must not end the run looking like success
+        _fail(f"recorder crashed: {type(error).__name__}: {error}", errors, stop)
+
+
+def _fail(message: str, errors: list | None, stop: threading.Event) -> None:
+    print(f"[ERROR] {message}")
+    if errors is not None:
+        errors.append(message)
+    stop.set()
 
 
 def _record_loop(url, mjpeg_path, csv_path, latest, stop, active, timeout_s, retry_s, opener) -> None:

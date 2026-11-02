@@ -311,6 +311,36 @@ class SafetyTest(unittest.TestCase):
                     run("http://cam", Path(tmp), preview=False, timeout_s=1.0, retry_s=0, opener=opener)
         self.assertEqual(len(calls), 1)
 
+    def test_bad_header_reconnects_and_keeps_recording(self):
+        stop = threading.Event()
+        calls = []
+        bad = (
+            b"\r\n--" + BOUNDARY + b"\r\nContent-Length: %d\r\nX-Frame-Seq: bad\r\n\r\n" % len(jpeg(1))
+            + jpeg(1)
+        )
+
+        def good():
+            yield part(jpeg(2), 0)
+            stop.set()
+
+        def opener(url, timeout_s):
+            calls.append(1)
+            return opened(iter([bad, part(jpeg(3), 1)])) if len(calls) == 1 else opened(good())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            summary = run("http://cam", Path(tmp), preview=False, timeout_s=1.0, retry_s=0, opener=opener, stop=stop)
+        self.assertGreaterEqual(len(calls), 2)
+        self.assertGreaterEqual(summary.frames, 1)
+
+    def test_unexpected_worker_error_fails_the_run(self):
+        def opener(url, timeout_s):
+            return opened(iter([part(jpeg(1), 0)]))
+
+        with mock.patch("record_camera.record_chunks", side_effect=ZeroDivisionError("bug")):
+            with tempfile.TemporaryDirectory() as tmp:
+                with self.assertRaises(RuntimeError):
+                    run("http://cam", Path(tmp), preview=False, timeout_s=1.0, retry_s=0, opener=opener)
+
     def test_stop_during_connect_is_not_missed(self):
         stop = threading.Event()
         servers = []
